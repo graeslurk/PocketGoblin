@@ -5,9 +5,9 @@
 local ADDON_NAME, ns = ...
 local L = ns.L
 
--- Colours of Blizzard's own title-bar text, for the default bags.
+-- Colour of Blizzard's own title-bar text, for the default bags.
 local BLIZZARD_GOLD = { 1, 0.82, 0, 1 }
-local BLIZZARD_GREY = { 0.5, 0.5, 0.5, 0.7 }
+local PORTRAIT_GAP = 4 -- between the separate backpack's bag icon and the trash can
 
 local buttons = {}
 local baganatorButton
@@ -52,8 +52,10 @@ local function PaintButton(button)
     local warn = button.lowSpace and button.hasTarget
     button.freeText:SetShown(button.lowSpace)
     if button.blizzardStyle then
-        UI.SetColor(button.trash, not button.hasTarget and BLIZZARD_GREY
-            or button.hovered and UI.C.white or warn and UI.C.danger or BLIZZARD_GOLD)
+        -- Gold like the sort button and the bag's title, even with nothing
+        -- to destroy (the tooltip says so).
+        UI.SetColor(button.trash, button.hovered and button.hasTarget and UI.C.white
+            or warn and UI.C.danger or BLIZZARD_GOLD)
         return
     end
     local color = not button.hasTarget and UI.C.muted or (button.hovered or warn) and UI.C.danger or UI.C.text
@@ -102,7 +104,7 @@ local function CreateDestroyButton(parent, size, blizzardStyle)
     button.blizzardStyle = blizzardStyle
 
     if blizzardStyle then
-        button.trash = UI.Icon(button, "icon-trash", size, BLIZZARD_GOLD)
+        button.trash = UI.Icon(button, "icon-trash", size - 2, BLIZZARD_GOLD) -- same size as the sort icon
         button.trash:SetPoint("CENTER")
         button:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
         -- Nudge the icon while pressed, like Blizzard's buttons.
@@ -145,12 +147,31 @@ local function CreateDestroyButton(parent, size, blizzardStyle)
     return button
 end
 
--- Default bags: sits to the left of the backpack's close button (combined
--- or not).
+-- The bag window's round bag icon, in the layouts different clients use:
+-- the picture itself first, since the button over it can be wider than
+-- the circle you see. Also returns where it was found, for /goblin debug.
+local function Portrait(frame)
+    local name = frame:GetName()
+    local candidates = {
+        { "PortraitContainer.portrait", frame.PortraitContainer and frame.PortraitContainer.portrait },
+        { "portrait", frame.portrait },
+        { "Portrait", frame.Portrait },
+        { "<name>Portrait", name and _G[name .. "Portrait"] },
+        { "PortraitButton", frame.PortraitButton },
+        { "<name>PortraitButton", name and _G[name .. "PortraitButton"] },
+    }
+    for _, candidate in ipairs(candidates) do
+        local region = candidate[2]
+        if type(region) == "table" and region.GetRight then return region, candidate[1] end
+    end
+end
+
+-- Default bags: on the backpack's title bar (combined or not).
 local function AttachToDefaultBags()
     local button = CreateDestroyButton(UIParent, 20, true)
     button:Hide()
 
+    local retried = false
     local function place()
         local frame
         if ContainerFrameCombinedBags and ContainerFrameCombinedBags:IsShown() then
@@ -165,9 +186,24 @@ local function AttachToDefaultBags()
         button:SetParent(frame)
         MatchParentLayer(button)
         button:ClearAllPoints()
-        -- Left of the sort button when that's shown, otherwise of the close button.
+        -- Separate bags: right of the bag icon, since the space between
+        -- the "Backpack" title and the close button is too small. Combined
+        -- bags: left of the sort button when that's shown, otherwise of the
+        -- close button.
         local close = frame.CloseButton or (frame:GetName() and _G[frame:GetName() .. "CloseButton"])
-        if ns.sortButton and ns.db.sortButton then
+        local portrait = frame ~= ContainerFrameCombinedBags and Portrait(frame)
+        local portraitRight = portrait and portrait:GetRight()
+        local _, buttonsY = (close or frame):GetCenter()
+        local frameLeft, frameTop = frame:GetLeft(), frame:GetTop()
+        local laidOut = portraitRight and buttonsY and frameLeft and frameTop
+        if portrait and not laidOut and not retried then
+            retried = true
+            C_Timer.After(0, function() place(); retried = false end) -- not laid out yet
+        end
+        if portrait and laidOut then
+            -- A fixed gap right of the icon, level with the close and sort buttons.
+            button:SetPoint("LEFT", frame, "TOPLEFT", portraitRight - frameLeft + PORTRAIT_GAP, buttonsY - frameTop)
+        elseif ns.sortButton and ns.db.sortButton then
             button:SetPoint("RIGHT", ns.sortButton, "LEFT", -2, 0)
         elseif close then
             button:SetPoint("RIGHT", close, "LEFT", -1, 0)
@@ -367,6 +403,17 @@ end
 
 -- Lines for /goblin debug about where the destroy buttons are.
 function ns.DebugDestroyButtons(print)
+    local frame = ContainerFrame1
+    local portrait, found = frame and Portrait(frame)
+    if portrait then
+        local frameLeft = frame:GetLeft() or 0
+        print(("Backpack icon: %s, left %s, right %s (from the bag's left edge), size %.0fx%.0f"):format(found,
+            tostring(portrait:GetLeft() and math.floor(portrait:GetLeft() - frameLeft + 0.5)),
+            tostring(portrait:GetRight() and math.floor(portrait:GetRight() - frameLeft + 0.5)),
+            portrait:GetWidth(), portrait:GetHeight()))
+    else
+        print("Backpack icon: not found")
+    end
     print(("Destroy buttons: %d, setting %s, Baganator API: %s"):format(#buttons,
         ns.db.destroyButton and "on" or "off",
         (Baganator and Baganator.API and Baganator.API.RegisterRegion) and "yes" or "no"))

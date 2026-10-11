@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+Fixed:
+- In separate bags, the trash can no longer covers the "Backpack" title; it sits next to the bag icon
+- The trash can on the default bags is always gold, like the sort button and the bag's title
+
 ## 1.2.0
 
 New:

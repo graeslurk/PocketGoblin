@@ -1,0 +1,14 @@
+# CurseForge / BigWigs packager settings.
+# Tag a release (e.g. v1.0.0) and the packager fills in @project-version@
+# in the TOC and builds the zip from this folder.
+package-as: PocketGoblin
+
+ignore:
+  - tools
+  - Art
+  - README.md
+  - Locales/template.lua
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown

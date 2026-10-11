@@ -1,0 +1,15 @@
+# Node packages for tools/localize.js (npm install luaparse)
+node_modules/
+package-lock.json
+
+# Local builds from the CurseForge/BigWigs packager
+.release/
+*.zip
+
+# Editor and system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp

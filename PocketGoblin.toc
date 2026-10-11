@@ -1,0 +1,21 @@
+## Interface: 16001
+## Title: Pocket Goblin
+## Notes: Your goblin in the bags: sells junk at vendors, tracks what it earns and makes room when your bags fill up. Type /goblin to open it.
+## Author: Graeslurk
+## Version: @project-version@
+## X-License: MIT
+## Category: Bags & Inventory
+## IconTexture: Interface\AddOns\PocketGoblin\Media\icon
+## SavedVariables: PocketGoblinDB
+## OptionalDeps: Baganator
+## AddonCompartmentFunc: PocketGoblin_OnAddonCompartmentClick
+
+Locales/Locales.lua
+
+QuestGear.lua
+Voice.lua
+PocketGoblin.lua
+UI.lua
+Minimap.lua
+DestroyButton.lua
+MerchantPanel.lua

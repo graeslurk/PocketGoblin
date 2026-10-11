@@ -4,6 +4,7 @@
 ## Author: Graeslurk
 ## Version: @project-version@
 ## X-License: All Rights Reserved
+## X-Curse-Project-ID: 1738641
 ## Category: Bags & Inventory
 ## IconTexture: Interface\AddOns\PocketGoblin\Media\icon
 ## SavedVariables: PocketGoblinDB

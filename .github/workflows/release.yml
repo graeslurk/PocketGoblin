@@ -1,0 +1,26 @@
+# Builds the addon with the BigWigs packager and uploads it to CurseForge
+# and GitHub Releases whenever a version tag (e.g. v1.0.0) is pushed.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the GitHub release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the packager needs full history and tags
+
+      - name: Package and release
+        uses: BigWigsMods/packager@v2

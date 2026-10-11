@@ -70,4 +70,4 @@ optional: the addon is and will stay free.
 
 ## License
 
-MIT, see `LICENSE`.
+All rights reserved, see `LICENSE`.

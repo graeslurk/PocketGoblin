@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Fixed the version in the window header showing as "vv1.0.0"
+
 ## 1.0.0
 
 First public release.

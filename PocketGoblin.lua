@@ -139,6 +139,8 @@ ns.POOR = POOR
 ns.VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata)(ADDON_NAME, "Version")
 if not ns.VERSION or ns.VERSION:find("^@") then
     ns.VERSION = "dev" -- running from source; the CurseForge packager fills in the real version
+else
+    ns.VERSION = ns.VERSION:gsub("^v", "") -- the packager uses the tag name, e.g. "v1.0.0"
 end
 
 local function Print(msg, ...)

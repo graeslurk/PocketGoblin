@@ -12,7 +12,7 @@ const path = require('path');
 const lp = require('luaparse');
 
 const ROOT = path.join(__dirname, '..');
-const FILES = ['PocketGoblin.lua', 'UI.lua', 'Voice.lua', 'MerchantPanel.lua', 'DestroyButton.lua', 'Minimap.lua'];
+const FILES = ['PocketGoblin.lua', 'UI.lua', 'Voice.lua', 'MerchantPanel.lua', 'DestroyButton.lua', 'BagSort.lua', 'Minimap.lua'];
 
 // Strings that look like text but aren't: brand, widget types, saved values.
 const NEVER = new Set(['Pocket Goblin', '|cffd4a72cPocket|r Goblin', '|cffd4a72cPocket Goblin|r: ', 'Default', 'Frame', 'Button',

@@ -69,6 +69,13 @@ local LINES = {
         L["Retrieved %s. That's what I call customer service!"],
         L["%s returned. The vendor looked offended."],
     },
+    -- nothing
+    sorted = {
+        L["Bags sorted. A place for everything, and the junk at the back!"],
+        L["All tidy. I even dusted the hearthstone."],
+        L["Sorted! Now I can actually find things to sell."],
+        L["Your bags are in order, boss. Don't mess them up."],
+    },
     -- free slots
     bagsLow = {
         L["Oi! Only %d bag slots left. Want me to toss something?"],

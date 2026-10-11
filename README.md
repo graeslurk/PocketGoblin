@@ -31,6 +31,7 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 - **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs
 - **Earnings** this session, today, per character and across all characters
 - **Destroy button** in your bags for the cheapest junk, with a confirmation and a value limit
+- **Sort button** on the default bags: stacks and sorts everything, with junk last
 - **Bag space warning** when your bags are nearly full
 - **Coin and lock icons** on junk and kept items, in the default bags and in Baganator
 - **Auto-repair**, optionally from guild funds
@@ -43,6 +44,7 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 |---|---|
 | `/goblin` | Open the window |
 | `/goblin sell` | Sell junk now (vendor must be open) |
+| `/goblin sort` | Stack and sort your bags |
 | `/goblin add`, `keep`, `remove <item>` | Put an item on a list, or take it off |
 | `/goblin chat [goblin\|plain\|off]` | Choose how the goblin talks in chat |
 | `/goblin profile [name]` | Show or switch this character's profile |

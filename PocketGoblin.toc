@@ -19,4 +19,5 @@ PocketGoblin.lua
 UI.lua
 Minimap.lua
 DestroyButton.lua
+BagSort.lua
 MerchantPanel.lua

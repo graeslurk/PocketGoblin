@@ -90,6 +90,7 @@ local function MatchParentLayer(button)
     button:SetFrameStrata(parent:GetFrameStrata())
     button:SetFrameLevel(level)
 end
+ns.MatchParentLayer = MatchParentLayer -- also used by the sort button
 
 -- size is the frame size. The default style is Pocket Goblin's dark rounded
 -- button; blizzardStyle is a bare gold icon that matches the default bags'
@@ -164,8 +165,11 @@ local function AttachToDefaultBags()
         button:SetParent(frame)
         MatchParentLayer(button)
         button:ClearAllPoints()
+        -- Left of the sort button when that's shown, otherwise of the close button.
         local close = frame.CloseButton or (frame:GetName() and _G[frame:GetName() .. "CloseButton"])
-        if close then
+        if ns.sortButton and ns.db.sortButton then
+            button:SetPoint("RIGHT", ns.sortButton, "LEFT", -2, 0)
+        elseif close then
             button:SetPoint("RIGHT", close, "LEFT", -1, 0)
         else
             button:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -30, -4)
@@ -353,6 +357,7 @@ function ns.UpdateDestroyButtons()
     for _, button in ipairs(buttons) do
         UpdateButton(button, target, lowSpace, freeSlots)
     end
+    if ns.UpdateSortButtons then ns.UpdateSortButtons() end
 end
 
 local function FrameName(frame)

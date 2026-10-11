@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0
+
+New:
+- **Sort bags** button on the default bags (and `/goblin sort`): stacks and sorts everything in your bags, hearthstone first and junk last
+
 ## 1.1.0
 
 New:

@@ -89,6 +89,7 @@ local defaults = {
     bagWarning = true,     -- warn on the destroy button when bags are nearly full...
     bagWarningSlots = 3,   -- ...at this many free slots or fewer
     destroyButton = true,  -- show the "destroy cheapest junk" button on the bags
+    sortButton = true,     -- show the "sort bags" button on the default bags
     destroyConfirm = true, -- ask before destroying
     destroyProtect = true, -- never destroy junk worth more than destroyLimit
     destroyLimit = 5000,   -- copper (50 silver); stacks count their total value
@@ -676,6 +677,7 @@ local function Debug(toChat)
         #containerFrames, shown, buttons, mapped, flagged)
 
     ns.DebugDestroyButtons(add)
+    if ns.DebugSortButton then ns.DebugSortButton(add) else add("Sort button: BagSort.lua not loaded") end
     add("Outgrown food: %s. Best food you carry enough of: level %s. Best drink: level %s.",
         db.sellOldFood and "on" or "off", tostring(bestFood.food or "none"), tostring(bestFood.drink or "none"))
 
@@ -972,6 +974,10 @@ local function SellJunk(manual)
         return
     end
     if ns.IsBuyingBack() then return end
+    if ns.IsSorting() then
+        if manual then Print(L["Wait until your bags are sorted."]) end
+        return
+    end
     StopSelling()
 
     local queue = {}
@@ -1494,6 +1500,7 @@ local function ShowHelp()
     print(L["  /goblin chat [goblin|plain|off] - choose how the goblin talks in chat"])
     print(L["  /goblin profile [name] - show or switch this character's profile"])
     print(L["  /goblin sell - sell now (vendor must be open)"])
+    print(L["  /goblin sort - stack and sort your bags"])
     print(L["  /goblin auto - toggle selling when a vendor opens ("] .. OnOff(db.autoSell) .. ")")
     print(L["  /goblin greys - toggle selling all grey items ("] .. OnOff(db.sellGreys) .. ")")
     print(L["  /goblin add <item> - always sell an item"])
@@ -1529,6 +1536,8 @@ SlashCmdList.POCKETGOBLIN = function(msg)
         ns.ToggleWindow()
     elseif cmd == "sell" then
         SellJunk(true)
+    elseif cmd == "sort" then
+        ns.SortBags()
     elseif cmd == "auto" then
         db.autoSell = not db.autoSell
         Print(L["Auto-sell on vendor open: %s"], OnOff(db.autoSell))
@@ -1851,6 +1860,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         ns.UpdateMinimapButton()
         UpdateBestFood()
         ns.SetupDestroyButtons()
+        ns.SetupSortButton()
         hooksecurefunc("BuybackItem", OnBuyback)
         hooksecurefunc("RepairAllItems", function(guildBank) guildRepairPending = guildBank and true or false end)
         if TooltipDataProcessor and Enum.TooltipDataType then

@@ -1865,6 +1865,10 @@ local function BuildBagsPage(page)
             end)
         AddRow(card, L["Grey out junk"], L["Fade and desaturate items that will be sold."],
             SettingToggle("greyOut", ns.OnRulesChanged))
+        AddRow(card, L["Sort button"],
+            L["A button on the default bags that stacks and sorts everything in them: hearthstone first, then "
+                .. "consumables, reagents, gear, trade goods and the rest, with junk last. Baganator has its own."],
+            SettingToggle("sortButton", ns.UpdateDestroyButtons)) -- moves both buttons
         AddRow(card, "Baganator",
             L["Baganator draws its own junk coin using Pocket Goblin's rules. If it doesn't, pick Pocket Goblin "
                 .. "as the junk plugin in Baganator's settings. Place the lock in Baganator's corner settings."])
@@ -2417,6 +2421,7 @@ local function BuildAboutPage(page)
         local commands = {
             { "/goblin", L["Open or close this window"] },
             { "/goblin sell", L["Sell junk now (vendor must be open)"] },
+            { "/goblin sort", L["Stack and sort your bags"] },
             { "/goblin add, keep, remove <item>", L["Put an item on a list, or take it off, by link or item ID"] },
             { "/goblin list", L["Print your lists in chat"] },
             { "/goblin minimap", L["Show or hide the minimap button"] },

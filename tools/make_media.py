@@ -238,6 +238,14 @@ def main():
         return min(lid, handle, body, lines)
     render("icon-trash", 32, 32, trash)
 
+    def sort(x, y):  # bars getting shorter, and an arrow down: sort bags
+        bars = min(capsule(x, y, 5, 9, 18, 9, 1.4), capsule(x, y, 5, 16, 15, 16, 1.4),
+                   capsule(x, y, 5, 23, 12, 23, 1.4))
+        arrow = min(capsule(x, y, 24, 7, 24, 24, 1.4), capsule(x, y, 19.5, 19.5, 24, 24, 1.4),
+                    capsule(x, y, 28.5, 19.5, 24, 24, 1.4))
+        return min(bars, arrow)
+    render("icon-sort", 32, 32, sort)
+
     # Logo: a goblin head with long pointed ears, slanted eyes and a grin,
     # holding up a big coin. One flat shape with cut-outs for the details.
     # Goblin face cut-outs for each mood, drawn around (26, 31).

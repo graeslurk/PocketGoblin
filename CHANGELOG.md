@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.0
+
+New:
+- **Buy back all** button on the vendor panel
+- **Auto-sell suggestions**: sell the same item yourself three times and the vendor panel offers to put it on the auto-sell list
+- The Pocket Goblin window can be **resized** (drag the bottom-right corner) and remembers its size and position. On small screens it shrinks to fit
+
+Simpler:
+- One **Chat messages** setting (Goblin, Plain or Off) replaces the chat, goblin voice and milestone switches. `/goblin chat` switches between them
+- One rule for **soulbound gear you can't use or have outgrown** replaces the two separate rules. If either was on, the combined rule is on
+- Fewer pages: **Quest gear** is now a tab on the Keep list page, **Destroy** moved to Bags, and **Profiles** moved to General
+- The vendor panel always lists your own sales for buyback too
+
+Safer:
+- The cheap white items rule no longer sells class reagents (Ankh, Flash Powder...), weapons, armor, fishing poles, shirts or tabards
+- Profession and class tools such as Thieves' Tools, Flint and Tinder and enchanting rods are never sold
+
+Fixed:
+- Long descriptions in the sidebar wrap instead of being cut off
+
 ## 1.0.1
 
 - Fixed the version in the window header showing as "vv1.0.0"

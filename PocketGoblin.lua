@@ -18,9 +18,16 @@ local WEAPON = Enum.ItemClass and Enum.ItemClass.Weapon or 2
 local ARMOR = Enum.ItemClass and Enum.ItemClass.Armor or 4
 local FISHING_POLE = Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Fishingpole or 20
 local THROWN = Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Thrown or 16
--- White gear the white-gear rule never sells: profession tools count as weapons
--- in Classic (Mining Pick, Blacksmith Hammer, Skinning Knife, Arclight Spanner).
-local NEVER_SELL_GEAR = { [2901] = true, [5956] = true, [7005] = true, [6219] = true }
+local REAGENT = Enum.ItemClass and Enum.ItemClass.Reagent or 5
+-- Profession and class tools no rule sells. Some count as weapons in Classic
+-- (Mining Pick, Blacksmith Hammer, Skinning Knife, Arclight Spanner); the rest
+-- are cheap white items (Thieves' Tools, Flint and Tinder, enchanting rods,
+-- Gyromatic Micro-Adjustor).
+local NEVER_SELL_TOOLS = {
+    [2901] = true, [5956] = true, [7005] = true, [6219] = true,
+    [5060] = true, [4471] = true, [6218] = true, [6339] = true, [11130] = true, [11145] = true,
+    [16207] = true, [10498] = true,
+}
 local COSMETIC_SLOTS = { INVTYPE_BODY = true, INVTYPE_TABARD = true }
 
 -- Weapon and armor types each class can ever use (Classic rules), by item
@@ -66,19 +73,17 @@ local defaults = {
     sellWhiteGear = true, -- sell white weapons and armor...
     whiteGearLevel = 10,  -- ...from this character level (before it, you still use them)
     skipQuestGear = true, -- never sell gear that quests ask for (QuestGear.lua), unless flagged
-    chat = true,         -- print messages to chat (sale summaries always print)
-    goblinVoice = true,  -- chat lines and moods in the goblin's own words
-    milestones = true,   -- celebrate sales milestones in chat
+    -- Chat messages: "goblin" (the goblin's voice, moods and milestones),
+    -- "plain" or "off" (sale summaries and repairs always print).
+    messages = "goblin",
     tooltipValue = true, -- show why and for how much an item sells, in its tooltip
     sellCheapWhites = false,    -- sell white items cheaper than cheapWhiteLimit...
-    cheapWhiteLimit = 1000,     -- ...copper per item (10 silver); not food, drink or ammo
-    sellUnusable = false,  -- sell soulbound gear this class can never use
+    cheapWhiteLimit = 1000,     -- ...copper per item (10 silver); not gear, food, drink, ammo or reagents
     sellOldFood = true,    -- sell food/drink when carrying a better kind you can use...
     oldFoodMinBetter = 5,  -- ...and at least this many of it
-    sellOutgrown = false,  -- sell soulbound gear far below this character's level...
+    sellSoulbound = false, -- sell soulbound gear this class can never use, or far below its level...
     outgrownLevels = 15,   -- ...by at least this many levels
-    merchantPanel = true,  -- buyback panel next to the vendor window...
-    merchantPanelAll = true, -- ...listing your own sales too, not just Pocket Goblin's
+    merchantPanel = true,  -- sell and buyback panel next to the vendor window
     autoRepair = true,     -- repair at vendors that can
     repairGuild = false,   -- use guild bank funds first
     bagWarning = true,     -- warn on the destroy button when bags are nearly full...
@@ -100,6 +105,8 @@ local defaults = {
     keepValueLimit = 10000, -- ...copper per item (1 gold)
     keepIcon = true,  -- lock icon on items on the keep list
     addedAt = {},     -- [itemID] = time() it was added to the auto-sell list
+    manualSales = {},  -- [itemID] = times you sold it yourself (for auto-sell suggestions)
+    noSuggest = {},    -- [itemID] = true: never suggest auto-selling it again
     -- List filters in the window. Unset keys (classID etc.) mean "all".
     filters = {
         sell = { qualities = {}, inBags = false, sort = "name" },
@@ -148,9 +155,19 @@ local function Print(msg, ...)
 end
 ns.Print = Print
 
--- Messages the user can mute with the chat setting.
+-- Messages the user can mute with the messages setting.
 local function Notify(msg, ...)
-    if db and db.chat then Print(msg, ...) end
+    if db and db.messages ~= "off" then Print(msg, ...) end
+end
+
+-- True when the goblin speaks in its own voice (and shows moods and milestones).
+function ns.GoblinVoice()
+    return ns.db ~= nil and ns.db.messages == "goblin"
+end
+
+local MESSAGE_STYLES = { goblin = L["Goblin"], plain = L["Plain"], off = L["Off"] }
+function ns.MessageStyleName(style)
+    return MESSAGE_STYLES[style] or style
 end
 
 local function ItemIDFromLink(link)
@@ -231,7 +248,7 @@ end
 -- White weapons and armor the white-gear rule may sell: not profession
 -- tools, fishing poles, thrown weapons, shirts or tabards.
 local function IsWhiteGear(itemID)
-    if NEVER_SELL_GEAR[itemID] then return false end
+    if NEVER_SELL_TOOLS[itemID] then return false end
     local _, _, _, equipLoc, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
     if not equipLoc or equipLoc == "" or COSMETIC_SLOTS[equipLoc] then return false end
     if classID == WEAPON then
@@ -352,7 +369,7 @@ local REASONS = {
     oldFood = L["you have better"],
     cheap = L["cheap white item"],
     unusable = L["your class can't use it"],
-    outgrown = "outgrown",
+    outgrown = L["you've outgrown it"],
 }
 ns.REASONS = REASONS
 
@@ -367,7 +384,7 @@ local function JunkReason(info, bag, slot, ignoreKeepRules)
     if not ignoreKeepRules and KeepRule(itemID) then return nil end
     if InEquipmentSet(bag, slot) then return nil end
     if quality == POOR then return db.sellGreys and "grey" or nil end
-    if info.hasNoValue or NEVER_SELL_GEAR[itemID] then return nil end
+    if info.hasNoValue or NEVER_SELL_TOOLS[itemID] then return nil end
     if db.skipQuestGear and ns.QUEST_GEAR[itemID] then return nil end
 
     local _, _, _, equipLoc, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
@@ -385,19 +402,20 @@ local function JunkReason(info, bag, slot, ignoreKeepRules)
         if level < bestFood[foodKind] then return "oldFood" end
     end
 
-    -- Cheap white items, apart from food and drink (their own rule) and ammo.
-    if quality == COMMON and db.sellCheapWhites and not foodKind and classID ~= PROJECTILE then
+    -- Cheap white items, apart from weapons and armor (the white-gear rule's
+    -- job, which also spares fishing poles, shirts and tabards), food and
+    -- drink (their own rule), ammo and class reagents (Ankh, Flash Powder...).
+    if quality == COMMON and db.sellCheapWhites and not foodKind and classID ~= WEAPON and classID ~= ARMOR
+        and classID ~= PROJECTILE and classID ~= REAGENT then
         local price = select(11, C_Item.GetItemInfo(itemID)) or 0
         if price > 0 and price < db.cheapWhiteLimit then return "cheap" end
     end
 
-    if isGear and info.isBound and quality and quality <= RARE and (db.sellUnusable or db.sellOutgrown) then
-        if db.sellUnusable and not CanClassUse(classID, subClassID) then return "unusable" end
-        if db.sellOutgrown then
-            local requiredLevel = select(5, C_Item.GetItemInfo(itemID)) or 0
-            if requiredLevel > 0 and requiredLevel <= UnitLevel("player") - db.outgrownLevels then
-                return "outgrown"
-            end
+    if isGear and info.isBound and quality and quality <= RARE and db.sellSoulbound then
+        if not CanClassUse(classID, subClassID) then return "unusable" end
+        local requiredLevel = select(5, C_Item.GetItemInfo(itemID)) or 0
+        if requiredLevel > 0 and requiredLevel <= UnitLevel("player") - db.outgrownLevels then
+            return "outgrown"
         end
     end
 end
@@ -669,7 +687,7 @@ local function Debug(toChat)
         (ns.GetJunkSummary()))
     local settings = {}
     for _, key in ipairs({ "autoSell", "sellGreys", "sellWhiteGear", "sellOldFood", "sellCheapWhites",
-        "sellUnusable", "sellOutgrown", "skipQuestGear", "keepValuable", "autoRepair", "destroyButton" }) do
+        "sellSoulbound", "skipQuestGear", "keepValuable", "autoRepair", "destroyButton", "messages" }) do
         settings[#settings + 1] = key .. "=" .. tostring(db[key])
     end
     add("Settings: %s", table.concat(settings, ", "))
@@ -698,6 +716,7 @@ function ns.OnRulesChanged()
     RefreshOverlays()
     RefreshWindow()
     if ns.UpdateDestroyButtons then ns.UpdateDestroyButtons() end
+    if ns.UpdateMerchantPanel then ns.UpdateMerchantPanel() end
     if Baganator and Baganator.API and Baganator.API.RequestItemButtonsRefresh then
         Baganator.API.RequestItemButtonsRefresh()
     end
@@ -856,6 +875,45 @@ local function RecordSale(entry, source)
     if source == "goblin" then
         session.lastSale = GetTime()
         ns.CheckMilestones()
+    elseif db.items[entry.itemID] == nil and not db.noSuggest[entry.itemID] then
+        db.manualSales[entry.itemID] = (db.manualSales[entry.itemID] or 0) + 1
+    end
+end
+
+------------------------------------------------------------------------
+-- Auto-sell suggestions: items you keep selling yourself
+------------------------------------------------------------------------
+
+local SUGGEST_AFTER = 3 -- times you sold an item yourself before it's suggested
+
+-- The item you've sold yourself most often (at least SUGGEST_AFTER times)
+-- that isn't on a list, wasn't declined and isn't junk already. Returns the
+-- item ID and how many times, or nil.
+function ns.GetSuggestion()
+    local bestID, bestCount
+    for itemID, count in pairs(db.manualSales) do
+        if count >= SUGGEST_AFTER and db.items[itemID] == nil and not db.noSuggest[itemID]
+            and (not bestCount or count > bestCount or (count == bestCount and itemID < bestID)) then
+            local _, _, quality = C_Item.GetItemInfo(itemID)
+            if quality == nil then
+                C_Item.RequestLoadItemDataByID(itemID) -- try again on the next update
+            elseif not IsJunk(itemID, quality) then
+                bestID, bestCount = itemID, count
+            end
+        end
+    end
+    return bestID, bestCount
+end
+
+-- Answers a suggestion: yes puts the item on the auto-sell list, no stops
+-- suggesting it.
+function ns.AnswerSuggestion(itemID, accept)
+    db.manualSales[itemID] = nil
+    if accept then
+        ns.SetFlag(itemID, true)
+    else
+        db.noSuggest[itemID] = true
+        if ns.UpdateMerchantPanel then ns.UpdateMerchantPanel() end
     end
 end
 
@@ -866,7 +924,7 @@ function ns.CheckMilestones(quiet)
             or (milestone.earned and charData.earned >= milestone.earned)
         if reached and not charData.milestones[milestone.key] then
             charData.milestones[milestone.key] = true
-            if not quiet and db.milestones then
+            if not quiet and ns.GoblinVoice() then
                 Print("|cffffd100" .. milestone.text .. "|r")
                 if SOUNDKIT and SOUNDKIT.IG_QUEST_LIST_COMPLETE then PlaySound(SOUNDKIT.IG_QUEST_LIST_COMPLETE) end
             end
@@ -913,6 +971,7 @@ local function SellJunk(manual)
         Print(L["Open a vendor window first."])
         return
     end
+    if ns.IsBuyingBack() then return end
     StopSelling()
 
     local queue = {}
@@ -1105,6 +1164,57 @@ function ns.BuyBack(sold)
     OnBuybackListChanged() -- record any sales the game hasn't reported yet
     local index = MatchSales(buybackSnapshot)[sold]
     if index then BuybackItem(index) end
+end
+
+local BUYBACK_INTERVAL = 0.3 -- seconds between buybacks in "Buy back all"
+local buybackTicker
+
+local function StopBuyingBack()
+    if buybackTicker then
+        buybackTicker:Cancel()
+        buybackTicker = nil
+        ns.UpdateMerchantPanel()
+    end
+end
+
+-- Buys back each of the sold history items in turn. Waits for the game to
+-- confirm each buyback before the next, and stops when the bags are full,
+-- the money runs out or the vendor closes.
+function ns.BuyBackAll(items)
+    if buybackTicker or ns.IsSelling() then return end
+    local queue, index, waits = {}, 0, 0
+    for i, sold in ipairs(items) do queue[i] = sold end
+    buybackTicker = C_Timer.NewTicker(BUYBACK_INTERVAL, function()
+        if not merchantOpen then
+            StopBuyingBack()
+            return
+        end
+        -- The last buyback hasn't reached the vendor's list yet.
+        if GetNumBuybackItems() ~= #buybackSnapshot then
+            waits = waits + 1
+            if waits > 10 then StopBuyingBack() end
+            return
+        end
+        waits = 0
+        index = index + 1
+        local sold = queue[index]
+        if not sold then
+            StopBuyingBack()
+        elseif ns.GetFreeBagSlots() == 0 then
+            Print(L["Your bags are full. Make room to buy back the rest."])
+            StopBuyingBack()
+        elseif GetMoney() < sold.value then
+            Print(L["Not enough money to buy back the rest."])
+            StopBuyingBack()
+        elseif not sold.boughtBack then
+            ns.BuyBack(sold)
+        end
+    end)
+    ns.UpdateMerchantPanel()
+end
+
+function ns.IsBuyingBack()
+    return buybackTicker ~= nil
 end
 
 ------------------------------------------------------------------------
@@ -1381,7 +1491,7 @@ local function ShowHelp()
     print(L["  /goblin - open the Pocket Goblin window"])
     print(L["  /goblin settings - open the settings"])
     print(L["  /goblin minimap - show or hide the minimap button"])
-    print(L["  /goblin chat - mute or unmute chat messages"])
+    print(L["  /goblin chat [goblin|plain|off] - choose how the goblin talks in chat"])
     print(L["  /goblin profile [name] - show or switch this character's profile"])
     print(L["  /goblin sell - sell now (vendor must be open)"])
     print(L["  /goblin auto - toggle selling when a vendor opens ("] .. OnOff(db.autoSell) .. ")")
@@ -1459,8 +1569,18 @@ SlashCmdList.POCKETGOBLIN = function(msg)
         ns.UpdateMinimapButton()
         RefreshWindow()
     elseif cmd == "chat" then
-        db.chat = not db.chat
-        Print(L["Chat messages: %s (sale summaries always show)"], OnOff(db.chat))
+        -- Sets the given style, or moves on to the next one.
+        local order = { "goblin", "plain", "off" }
+        local style = arg:lower()
+        if not tContains(order, style) then
+            local current = 0
+            for i, key in ipairs(order) do
+                if key == db.messages then current = i end
+            end
+            style = order[current % #order + 1]
+        end
+        db.messages = style
+        Print(L["Chat messages: %s (sale summaries always show)"], ns.MessageStyleName(style))
         RefreshWindow()
     elseif cmd == "profile" then
         if arg == "" then
@@ -1577,14 +1697,27 @@ local function MigrateLists(profile)
     if profile.filters and profile.filters.sell then profile.filters.sell.addedBy = nil end
 end
 
-local function LoadProfile(name)
-    local profile = PocketGoblinDB.profiles[name] or {}
-    PocketGoblinDB.profiles[name] = profile
-    -- Renamed settings (white-gear auto-flagging became the white-gear rule).
+-- Brings a profile's settings up to date: renamed and merged settings, then
+-- defaults for anything missing.
+local function UpgradeProfile(profile)
+    -- White-gear auto-flagging became the white-gear rule.
     if profile.autoFlagGear ~= nil then
         profile.sellWhiteGear, profile.autoFlagGear = profile.autoFlagGear, nil
         profile.whiteGearLevel, profile.autoFlagLevel = profile.autoFlagLevel, nil
     end
+    -- Chat, goblin voice and milestones became one "messages" setting.
+    if profile.messages == nil and (profile.chat ~= nil or profile.goblinVoice ~= nil) then
+        profile.messages = (profile.chat == false and "off") or (profile.goblinVoice == false and "plain") or "goblin"
+    end
+    profile.chat, profile.goblinVoice, profile.milestones = nil, nil, nil
+    -- "Gear your class can't use" and "outgrown gear" became one rule.
+    if profile.sellSoulbound == nil and (profile.sellUnusable ~= nil or profile.sellOutgrown ~= nil) then
+        profile.sellSoulbound = (profile.sellUnusable or profile.sellOutgrown) and true or false
+    end
+    profile.sellUnusable, profile.sellOutgrown = nil, nil
+    -- Removed: the vendor panel always lists your own sales.
+    profile.merchantPanelAll = nil
+
     ApplyDefaults(profile, defaults)
     if (profile.version or 0) < 2 then
         -- The coin got bigger in v2 (old 120% is the new 100%).
@@ -1595,6 +1728,12 @@ local function LoadProfile(name)
     if profile.filters.history.source == "junkseller" then
         profile.filters.history.source = "goblin" -- renamed with the addon
     end
+end
+
+local function LoadProfile(name)
+    local profile = PocketGoblinDB.profiles[name] or {}
+    PocketGoblinDB.profiles[name] = profile
+    UpgradeProfile(profile)
     PocketGoblinDB.profileKeys[characterKey] = name
     db = profile
     ns.db = profile
@@ -1650,15 +1789,14 @@ function ns.CopyProfile(source)
     if not from or from == db then return end
     wipe(db)
     for key, value in pairs(DeepCopy(from)) do db[key] = value end
-    ApplyDefaults(db, defaults)
+    UpgradeProfile(db) -- the source may not have been loaded since an update
     Print(L["Copied profile %s into %s."], source, ns.GetProfileName())
     ProfileChanged()
 end
 
 function ns.ResetProfile()
     wipe(db)
-    ApplyDefaults(db, defaults)
-    db.version = 2
+    UpgradeProfile(db)
     Print(L["Profile %s was reset."], ns.GetProfileName())
     ProfileChanged()
 end
@@ -1734,6 +1872,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "MERCHANT_CLOSED" then
         merchantOpen = false
         StopSelling()
+        StopBuyingBack()
         currentVisit = nil
         wipe(pendingOwnSales)
         RefreshWindow()

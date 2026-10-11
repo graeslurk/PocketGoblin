@@ -10,7 +10,7 @@ You decide, with simple rules (all can be turned off):
 - **Grey items**
 - **White weapons and armor** once you're past the starting levels (from level 10 by default)
 - **Food and drink you've outgrown** when you carry enough of something better
-- **Cheap white items** below a price you choose (off by default)
+- **Cheap white items** below a price you choose (off by default; never class reagents or profession tools)
 - **Soulbound gear your class can't use, or that you've outgrown** (off by default)
 - **Anything on your auto-sell list**
 
@@ -26,7 +26,8 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 ## Features
 
 - **Alt+Right-click** any item in your bags to put it on the auto-sell list or the keep list
-- **Vendor panel** next to the vendor window: a *Sell junk* button and one-click buyback of anything you sold
+- **Vendor panel** next to the vendor window: a *Sell junk* button, and buyback of anything you sold, one item at a time or all at once
+- **Suggestions**: sell the same item yourself a few times and your goblin offers to auto-sell it
 - **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs
 - **Earnings** this session, today, per character and across all characters
 - **Destroy button** in your bags for the cheapest junk, with a confirmation and a value limit
@@ -34,7 +35,7 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 - **Coin and lock icons** on junk and kept items, in the default bags and in Baganator
 - **Auto-repair**, optionally from guild funds
 - **Profiles**, per character
-- A goblin with **moods**, a **voice** and **milestones** (can be turned off)
+- A goblin with **moods**, a **voice** and **milestones**, or plain chat messages, or none
 
 ## Commands
 
@@ -43,6 +44,7 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 | `/goblin` | Open the window |
 | `/goblin sell` | Sell junk now (vendor must be open) |
 | `/goblin add`, `keep`, `remove <item>` | Put an item on a list, or take it off |
+| `/goblin chat [goblin\|plain\|off]` | Choose how the goblin talks in chat |
 | `/goblin profile [name]` | Show or switch this character's profile |
 | `/goblin welcome` | Show the welcome window again |
 | `/goblin debug` | Details to copy into a bug report |

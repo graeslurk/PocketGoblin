@@ -83,7 +83,7 @@ local LINES = {
 -- The message in goblin voice if that's on, otherwise the plain one, with
 -- the arguments filled in.
 function ns.Say(key, plain, ...)
-    local lines = ns.db and ns.db.goblinVoice and LINES[key]
+    local lines = ns.GoblinVoice() and LINES[key]
     local template = lines and lines[math.random(#lines)] or plain
     return template:format(...)
 end

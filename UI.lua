@@ -9,7 +9,10 @@ local FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 local QUESTION_MARK = 134400
 
 -- Layout. The window has a fixed size, so widths are computed up front.
+-- The window can be made taller and wider (not smaller than WIDTH, which
+-- the list filters need); the widths below are where layouts start.
 local WIDTH, HEIGHT = 840, 650
+local SCREEN_MARGIN = 20 -- kept free around the window on small screens
 local HEADER_HEIGHT = 72
 local SIDEBAR_WIDTH = 210
 local PAGE_WIDTH = WIDTH - SIDEBAR_WIDTH - 2
@@ -43,18 +46,17 @@ local C = {
 local PAGES = {
     { section = "LISTS" },
     { key = "list", title = L["Auto-sell list"], subtitle = L["Flagged items"], icon = "icon-list" },
-    { key = "keep", title = L["Keep list"], subtitle = L["Never sold"], icon = "icon-lock" },
-    { key = "quest", title = L["Quest gear"], subtitle = L["Kept for quests"], icon = "icon-quest" },
+    { key = "keep", title = L["Keep list"], subtitle = L["Kept items & quest gear"], icon = "icon-lock" },
     { key = "history", title = L["History"], subtitle = L["Sales & earnings"], icon = "icon-history" },
     { section = "SETTINGS" },
-    { key = "general", title = L["General"], subtitle = L["Interface & chat"], icon = "icon-gear" },
+    { key = "general", title = L["General"], subtitle = L["Interface, chat & profiles"], icon = "icon-gear" },
     { key = "rules", title = L["Junk rules"], subtitle = L["What gets sold"], icon = "icon-filter" },
     { key = "vendor", title = L["Vendor"], subtitle = L["Selling & repairs"], icon = "icon-coin" },
-    { key = "bags", title = L["Bags"], subtitle = L["Coin icons & fading"], icon = "icon-bag" },
-    { key = "destroy", title = L["Destroy"], subtitle = L["Free up bag space"], icon = "icon-trash" },
-    { key = "profiles", title = L["Profiles"], subtitle = L["Per-character settings"], icon = "icon-profile" },
+    { key = "bags", title = L["Bags"], subtitle = L["Icons, destroy & space"], icon = "icon-bag" },
     { key = "about", title = L["About"], subtitle = L["How it works & commands"], icon = "icon-info" },
 }
+-- Old page keys that now live on another page: { page, keep list tab }.
+local PAGE_ALIASES = { quest = { "keep", "quest" }, destroy = { "bags" }, profiles = { "general" } }
 local NAV_HEIGHT, NAV_SPACING, SECTION_HEIGHT = 44, 46, 24
 
 local window
@@ -65,6 +67,7 @@ local refreshPending = false
 
 -- List page widgets
 local sellList, keepList, questList, junkText, sellButton
+local keepTab, keepTabs, keepFrames = "keep", nil, {} -- Keep list page: "keep" or "quest" tab
 local dependentRows = {} -- { regions, key }: rows dimmed while ns.db[key] is off
 
 ------------------------------------------------------------------------
@@ -435,6 +438,57 @@ local function CreateCornerPicker(parent, get, set)
     return holder
 end
 
+-- A row of options where exactly one is chosen (gold), like tabs.
+-- options: { { key, label }, ... }; get() returns the chosen key.
+local function CreateSegmented(parent, options, get, set)
+    local holder = CreateFrame("Frame", nil, parent)
+    holder:SetHeight(30)
+    Rounded(holder, "BACKGROUND", C.control)
+    Rounded(holder, "BORDER", C.controlBorder, "rounded-border")
+
+    local segments = {}
+    function holder:Update()
+        local current = get()
+        for _, segment in ipairs(segments) do
+            local selected = segment.key == current
+            segment.bg:SetShown(selected or segment.hovered)
+            SetColor(segment.bg, selected and C.gold or C.controlHover)
+            local color = selected and C.dark or C.text
+            segment.text:SetTextColor(color[1], color[2], color[3])
+            segment.text:SetShadowOffset(selected and 0 or 1, selected and 0 or -1)
+        end
+    end
+
+    local x = 3
+    for _, option in ipairs(options) do
+        local segment = CreateFrame("Button", nil, holder)
+        segment.key = option[1]
+        segment:SetHeight(24)
+        segment:SetPoint("LEFT", x, 0)
+        segment.bg = Rounded(segment, "BACKGROUND", C.gold)
+        segment.text = Text(segment, 12, C.text)
+        segment.text:SetPoint("CENTER")
+        segment.text:SetJustifyH("CENTER")
+        segment.text:SetText(option[2])
+        segment:SetWidth(math.max(64, segment.text:GetStringWidth() + 24))
+        segment:SetScript("OnClick", function(self)
+            if get() == self.key then return end
+            PlayToggleSound(true)
+            set(self.key)
+            holder:Update()
+        end)
+        segment:SetScript("OnEnter", function(self) self.hovered = true; holder:Update() end)
+        segment:SetScript("OnLeave", function(self) self.hovered = false; holder:Update() end)
+        segments[#segments + 1] = segment
+        x = x + segment:GetWidth() + 2
+    end
+    holder:SetWidth(x + 1)
+
+    holder:Update()
+    toggles[#toggles + 1] = holder -- follows profile changes
+    return holder
+end
+
 -- Filled button styles: { background, hovered background, text }.
 local BUTTON_STYLES = {
     primary = { C.gold, C.goldHover, C.dark },
@@ -651,7 +705,7 @@ end
 ------------------------------------------------------------------------
 
 -- A rounded card with an uppercase title and a gold accent bar. Rows are
--- stacked with AddRow; call FinishCard once all rows are added.
+-- added with AddRow; call FinishCard once all rows are added.
 local function CreateCard(parent, title)
     local card = CreateFrame("Frame", nil, parent)
     card:SetWidth(CARD_WIDTH)
@@ -667,64 +721,95 @@ local function CreateCard(parent, title)
     label:SetPoint("LEFT", bar, "RIGHT", 10, 0)
     label:SetText(title:upper())
 
-    card.y = -56
+    card.rows = {}
     return card
 end
 
 -- A row with a title, an optional description and an optional control on
 -- the right. makeControl(card) creates the control. Returns the regions so
--- callers can dim them.
+-- callers can dim them. LayoutCard positions the row.
 local function AddRow(card, title, description, makeControl)
     local control = makeControl and makeControl(card)
-    local controlWidth = control and control:GetWidth() or 0
-    local textWidth = ROW_WIDTH - controlWidth - (control and 24 or 0)
 
     local titleText = Text(card, 14, C.text)
-    titleText:SetWidth(textWidth)
     titleText:SetText(title)
-    local textHeight = titleText:GetStringHeight()
 
     local descText
     if description then
         descText = Text(card, 12, C.muted)
-        descText:SetWidth(textWidth)
         descText:SetText(description)
         descText:SetPoint("TOPLEFT", titleText, "BOTTOMLEFT", 0, -4)
-        textHeight = textHeight + 4 + descText:GetStringHeight()
     end
 
-    local rowHeight = math.max(textHeight, control and control:GetHeight() or 0)
-    titleText:SetPoint("TOPLEFT", 20, card.y - (rowHeight - textHeight) / 2)
-    if control then
-        control:SetPoint("RIGHT", card, "TOPRIGHT", -20, card.y - rowHeight / 2)
-    end
-
-    card.y = card.y - rowHeight - 20
+    card.rows[#card.rows + 1] = { title = titleText, desc = descText, control = control }
     return { titleText, descText, control }
 end
 
-local function FinishCard(card)
-    card:SetHeight(-card.y)
+-- Stacks a card's rows for the given card width (text wraps to fit) and
+-- sizes the card to them.
+local function LayoutCard(card, width)
+    card:SetWidth(width)
+    local y = -56
+    for _, row in ipairs(card.rows) do
+        local control = row.control
+        local textWidth = width - 40 - (control and control:GetWidth() + 24 or 0)
+        row.title:SetWidth(textWidth)
+        local textHeight = row.title:GetStringHeight()
+        if row.desc then
+            row.desc:SetWidth(textWidth)
+            textHeight = textHeight + 4 + row.desc:GetStringHeight()
+        end
+
+        local rowHeight = math.max(textHeight, control and control:GetHeight() or 0)
+        row.title:ClearAllPoints()
+        row.title:SetPoint("TOPLEFT", 20, y - (rowHeight - textHeight) / 2)
+        if control then
+            control:ClearAllPoints()
+            control:SetPoint("RIGHT", card, "TOPRIGHT", -20, y - rowHeight / 2)
+        end
+        y = y - rowHeight - 20
+    end
+    card:SetHeight(-y)
 end
 
--- Stacks cards in a scrollable page.
+local function FinishCard(card)
+    LayoutCard(card, CARD_WIDTH)
+end
+
+-- Stacks cards in a scrollable page, and lays them out again when the
+-- window is resized.
 local function CreateCardPage(page, build)
     local scroll, content = CreateScrollArea(page)
     scroll:SetPoint("TOPLEFT", 0, -2)
     scroll:SetPoint("BOTTOMRIGHT", -16, 2)
     content:SetWidth(SCROLL_WIDTH)
 
-    local y = -20
-    local function addCard(title)
-        local card = CreateCard(content, title)
-        card:SetPoint("TOPLEFT", 20, y)
-        return card, function()
-            FinishCard(card)
+    local cards = {}
+    local function stack(width)
+        local y = -20
+        for _, card in ipairs(cards) do
+            if width then LayoutCard(card, width - 40) end
+            card:ClearAllPoints()
+            card:SetPoint("TOPLEFT", 20, y)
             y = y - card:GetHeight() - 16
         end
+        content:SetHeight(-y + 4)
+    end
+
+    local function addCard(title)
+        local card = CreateCard(content, title)
+        cards[#cards + 1] = card
+        return card, function() FinishCard(card) end
     end
     build(addCard)
-    content:SetHeight(-y + 4)
+    stack()
+    scroll:HookScript("OnSizeChanged", function(_, width)
+        if width > 0 then stack(width) end
+    end)
+    -- The window may have been resized while this page was hidden.
+    scroll:HookScript("OnShow", function(self)
+        if self:GetWidth() > 0 then stack(self:GetWidth()) end
+    end)
 end
 
 ------------------------------------------------------------------------
@@ -1419,8 +1504,30 @@ local function RefreshSellList()
     end
 end
 
+-- Shows the "keep" or "quest" tab of the Keep list page.
+local function SetKeepTab(tab)
+    keepTab = tab
+    for key, frame in pairs(keepFrames) do frame:SetShown(key == tab) end
+    if keepTabs then keepTabs:Update() end
+    ns.RefreshWindow()
+end
+
+-- The keep list, and on a second tab the quest gear the rules never sell.
 local function BuildKeepPage(page)
-    keepList = CreateListCard(page, {
+    keepTabs = CreateSegmented(page, { { "keep", L["Keep list"] }, { "quest", L["Quest gear"] } },
+        function() return keepTab end, SetKeepTab)
+    keepTabs:SetPoint("TOPLEFT", 20, -18)
+
+    for _, tab in ipairs({ "keep", "quest" }) do
+        local frame = CreateFrame("Frame", nil, page)
+        frame:SetPoint("TOPLEFT", 0, -48)
+        frame:SetPoint("BOTTOMRIGHT")
+        frame:SetShown(tab == keepTab)
+        keepFrames[tab] = frame
+    end
+
+    local frame = keepFrames.keep
+    keepList = CreateListCard(frame, {
         key = "keep",
         title = L["KEEP LIST"],
         bottom = 64,
@@ -1430,11 +1537,27 @@ local function BuildKeepPage(page)
     })
     CreateDropOverlay(keepList, "keep", L["Drop to always keep this item"], true)
 
-    local note = Text(page, 12, C.muted)
+    local note = Text(frame, 12, C.muted)
     note:SetPoint("BOTTOMLEFT", 22, 22)
-    note:SetWidth(PAGE_WIDTH - 44)
+    note:SetPoint("BOTTOMRIGHT", -22, 22)
     note:SetText(L["Items here are never sold or destroyed, whatever the junk rules say. Keep whole groups of items "
         .. "with the \"Always keep\" rules on the Junk rules page."])
+
+    frame = keepFrames.quest
+    questList = CreateListCard(frame, {
+        key = "quest",
+        title = L["QUEST GEAR"],
+        bottom = 64,
+        emptyIcon = "icon-quest",
+    })
+    questList.empty.title:SetText(L["No matches"])
+    questList.empty.body:SetText(L["No quest gear matches your search and filters."])
+
+    note = Text(frame, 12, C.muted)
+    note:SetPoint("BOTTOMLEFT", 22, 22)
+    note:SetPoint("BOTTOMRIGHT", -22, 22)
+    note:SetText(L["Weapons and armor that quests ask you to bring. The junk rules never sell them while "
+        .. "\"Quest gear\" is on (Junk rules, Always keep). Items you put on the auto-sell list still sell."])
 end
 
 local function RefreshKeepList()
@@ -1449,23 +1572,6 @@ local function RefreshKeepList()
     end
 end
 
-local function BuildQuestPage(page)
-    questList = CreateListCard(page, {
-        key = "quest",
-        title = L["QUEST GEAR"],
-        bottom = 64,
-        emptyIcon = "icon-quest",
-    })
-    questList.empty.title:SetText(L["No matches"])
-    questList.empty.body:SetText(L["No quest gear matches your search and filters."])
-
-    local note = Text(page, 12, C.muted)
-    note:SetPoint("BOTTOMLEFT", 22, 22)
-    note:SetWidth(PAGE_WIDTH - 44)
-    note:SetText(L["Weapons and armor that quests ask you to bring. The junk rules never sell them while "
-        .. "\"Quest gear\" is on (Junk rules, Always keep). Items you put on the auto-sell list still sell."])
-end
-
 local function RefreshQuestList()
     SetListItems(questList, GetQuestGearItems())
 end
@@ -1473,30 +1579,6 @@ end
 ------------------------------------------------------------------------
 -- Settings pages
 ------------------------------------------------------------------------
-
-local function BuildGeneralPage(page)
-    CreateCardPage(page, function(addCard)
-        local card, finish = addCard(L["Interface"])
-        AddRow(card, L["Show minimap button"], L["Left-click opens the list, right-click the settings."],
-            SettingToggle("showMinimap", ns.UpdateMinimapButton))
-        AddRow(card, L["Print messages to chat"],
-            L["Messages when items are flagged. The summary after selling always shows."],
-            SettingToggle("chat"))
-        AddRow(card, L["Explain in tooltips"],
-            L["Items in your bags say whether they'll be sold or kept, why, and what the stack sells for."],
-            SettingToggle("tooltipValue"))
-        finish()
-
-        card, finish = addCard(L["Personality"])
-        AddRow(card, L["Goblin voice"],
-            L["Chat messages in the goblin's own words, and its mood under the title. Off gives plain messages."],
-            SettingToggle("goblinVoice", ns.RefreshWindow))
-        AddRow(card, L["Milestone messages"],
-            L["A short celebration in chat when your goblin reaches a sales milestone."],
-            SettingToggle("milestones"))
-        finish()
-    end)
-end
 
 -- Price steps for the cheap white items limit, in copper (up to 1 gold).
 local CHEAP_LIMITS = { 1, 5, 10, 25, 50, 100, 200, 500, 1000, 2500, 5000, 10000 }
@@ -1618,11 +1700,15 @@ local function BuildRulesPage(page)
             L["Items you've chosen to never sell. Alt+Right-click an item and choose \"Never sell\" to add it."],
             function(parent)
                 local open = CreateButton(parent, L["Keep list"], 110)
-                open:SetScript("OnClick", function() SelectPage("keep") end)
+                open:SetScript("OnClick", function()
+                    SetKeepTab("keep")
+                    SelectPage("keep")
+                end)
                 return open
             end)
         AddRow(card, L["Quest gear"],
-            L["Never sell weapons and armor that quests ask for. They're listed on the Quest gear page."],
+            L["Never sell weapons and armor that quests ask for. They're listed on the Keep list page, "
+                .. "under Quest gear."],
             SettingToggle("skipQuestGear", ns.OnRulesChanged))
         AddRow(card, L["Names containing"],
             L["Never sell items whose name contains one of these words, e.g. potion, elixir. Separate them "
@@ -1667,8 +1753,9 @@ local function BuildRulesPage(page)
                     end)
             end)
         AddRow(card, L["Sell cheap white items"],
-            L["Any other white item worth less than the amount below, like cheap reagents or trade goods. "
-                .. "Food, drink and ammo are left to their own rules."],
+            L["Other white items worth less than the amount below, like cheap trade goods. Weapons, armor, "
+                .. "food and drink are left to their own rules; ammo, class reagents and profession tools are "
+                .. "never sold this way."],
             SettingToggle("sellCheapWhites", ns.OnRulesChanged))
         AddDependentRow(card, "sellCheapWhites", L["Cheaper than"],
             L["Price per item. Drag, or type an amount like 10s or 1s50c."],
@@ -1701,14 +1788,11 @@ local function BuildRulesPage(page)
         finish()
 
         card, finish = addCard(L["Soulbound gear"])
-        AddRow(card, L["Sell gear your class can't use"],
-            L["Weapons and armor your class can never equip, like plate on a mage or a wand on a warrior. "
-                .. "Up to rare quality."],
-            SettingToggle("sellUnusable", ns.OnRulesChanged))
-        AddRow(card, L["Sell outgrown gear"],
-            L["Weapons and armor whose required level is far below yours. Up to rare quality."],
-            SettingToggle("sellOutgrown", ns.OnRulesChanged))
-        AddDependentRow(card, "sellOutgrown", L["Levels below you"],
+        AddRow(card, L["Sell gear you can't use or have outgrown"],
+            L["Weapons and armor your class can never equip, like plate on a mage or a wand on a warrior, "
+                .. "and gear whose required level is far below yours. Up to rare quality."],
+            SettingToggle("sellSoulbound", ns.OnRulesChanged))
+        AddDependentRow(card, "sellSoulbound", L["Levels below you"],
             L["How far below your level gear has to be to count as outgrown."],
             function(parent)
                 return CreateSlider(parent, 5, 30, 1, function() return ns.db.outgrownLevels end,
@@ -1734,12 +1818,9 @@ local function BuildVendorPage(page)
                 .. "sale buyable; press Sell junk again for the next 12."],
             SettingToggle("sellBatchLimit"))
         AddRow(card, L["Vendor panel"],
-            L["A small window next to the vendor with a Sell junk button, and what you sold so you can "
-                .. "buy things back."],
+            L["A small window next to the vendor with a Sell junk button and everything you sold, to buy "
+                .. "back one by one or all at once. It also offers to auto-sell items you keep selling yourself."],
             SettingToggle("merchantPanel", ns.UpdateMerchantPanel))
-        AddDependentRow(card, "merchantPanel", L["Buy back your own sales too"],
-            L["List everything you sold, not just what Pocket Goblin sold."],
-            SettingToggle("merchantPanelAll", ns.UpdateMerchantPanel))
         finish()
 
         card, finish = addCard(L["Repairs"])
@@ -1752,13 +1833,17 @@ local function BuildVendorPage(page)
     end)
 end
 
+-- Slider steps for the destroy value limit, in copper (up to 5 gold).
+local LIMITS = { 1, 10, 25, 50, 100, 200, 500, 1000, 2500, 5000, 10000, 20000, 30000, 40000, 50000 }
+
+-- Icons in the bags, the destroy button and the bag space warning.
 local function BuildBagsPage(page)
     CreateCardPage(page, function(addCard)
-        local card, finish = addCard(L["Default bags"])
+        local card, finish = addCard(L["Bag icons"])
         AddRow(card, L["Coin icon on junk"], L["Show a coin in the corner of items that will be sold."],
             SettingToggle("showIcons", ns.OnRulesChanged))
         AddRow(card, L["Lock on kept items"], L["Show a lock on items on your keep list. It uses the same "
-                .. "size and corner as the coin (below). In Baganator, place it in Baganator's corner settings."],
+                .. "size and corner as the coin (below)."],
             SettingToggle("keepIcon", ns.OnRulesChanged))
         AddRow(card, L["Icon size"], L["Size of the coin and lock in the corner of the item."],
             function(parent)
@@ -1780,22 +1865,12 @@ local function BuildBagsPage(page)
             end)
         AddRow(card, L["Grey out junk"], L["Fade and desaturate items that will be sold."],
             SettingToggle("greyOut", ns.OnRulesChanged))
-        finish()
-
-        card, finish = addCard("Baganator")
-        AddRow(card, L["Junk coin"],
+        AddRow(card, "Baganator",
             L["Baganator draws its own junk coin using Pocket Goblin's rules. If it doesn't, pick Pocket Goblin "
-                .. "as the junk plugin in Baganator's settings."])
+                .. "as the junk plugin in Baganator's settings. Place the lock in Baganator's corner settings."])
         finish()
-    end)
-end
 
--- Slider steps for the destroy value limit, in copper (up to 5 gold).
-local LIMITS = { 1, 10, 25, 50, 100, 200, 500, 1000, 2500, 5000, 10000, 20000, 30000, 40000, 50000 }
-
-local function BuildDestroyPage(page)
-    CreateCardPage(page, function(addCard)
-        local card, finish = addCard(L["Destroy button"])
+        card, finish = addCard(L["Destroy button"])
         AddRow(card, L["Show destroy button"],
             L["Adds a trash can to your bags that destroys the junk item worth the least. Hover it to "
                 .. "see the item and its value before you click."],
@@ -1810,9 +1885,6 @@ local function BuildDestroyPage(page)
                 open:SetScript("OnClick", function() SelectPage("rules") end)
                 return open
             end)
-        finish()
-
-        card, finish = addCard(L["Value limit"])
         AddRow(card, L["Protect valuable junk"],
             L["Never destroy junk worth more than the limit below. For stacks, the value of the whole "
                 .. "stack counts."],
@@ -1832,7 +1904,7 @@ local function BuildDestroyPage(page)
         card, finish = addCard(L["Bag space"])
         AddRow(card, L["Warn when bags are nearly full"],
             L["The trash can turns red and shows how many slots are free. You also get a chat message, "
-                .. "if chat messages are on."],
+                .. "unless chat messages are off."],
             SettingToggle("bagWarning", ns.UpdateDestroyButtons))
         dependentRows[#dependentRows + 1] = { AddRow(card, L["Free slots"],
             L["Warn at this many free bag slots or fewer."],
@@ -2018,13 +2090,12 @@ local function BuildHistoryPage(page)
     Rounded(stats, "BACKGROUND", C.card)
     Rounded(stats, "BORDER", C.cardBorder, "rounded-border")
 
-    local tileWidth = (PAGE_WIDTH - 40) / #STAT_LABELS
     history.stats = {}
+    local captions, dividers = {}, {}
     for i, label in ipairs(STAT_LABELS) do
-        local x = (i - 1) * tileWidth
         local caption = Text(stats, 11, C.muted)
-        caption:SetPoint("TOPLEFT", x + 20, -18)
         caption:SetText(label)
+        captions[i] = caption
         local value = Text(stats, 17, C.text)
         value:SetPoint("TOPLEFT", caption, "BOTTOMLEFT", 0, -6)
         local allSales = Text(stats, 11, C.muted)
@@ -2034,10 +2105,28 @@ local function BuildHistoryPage(page)
             local divider = stats:CreateTexture(nil, "ARTWORK")
             divider:SetColorTexture(1, 1, 1, 0.06)
             divider:SetWidth(1)
-            divider:SetPoint("TOPLEFT", x, -14)
-            divider:SetPoint("BOTTOMLEFT", x, 14)
+            dividers[i] = divider
         end
     end
+    -- Equal-width tiles across the card, whatever the window's width.
+    local function placeTiles(width)
+        local tileWidth = width / #STAT_LABELS
+        for i, caption in ipairs(captions) do
+            local x = (i - 1) * tileWidth
+            caption:SetPoint("TOPLEFT", x + 20, -18)
+            if dividers[i] then
+                dividers[i]:SetPoint("TOPLEFT", x, -14)
+                dividers[i]:SetPoint("BOTTOMLEFT", x, 14)
+            end
+        end
+    end
+    placeTiles(PAGE_WIDTH - 40)
+    stats:SetScript("OnSizeChanged", function(_, width)
+        if width > 0 then placeTiles(width) end
+    end)
+    stats:SetScript("OnShow", function(self)
+        if self:GetWidth() > 0 then placeTiles(self:GetWidth()) end
+    end)
 
     -- Recent sales
     local card = CreateFrame("Frame", nil, page)
@@ -2100,7 +2189,7 @@ local function BuildHistoryPage(page)
 
     local note = Text(page, 12, C.muted)
     note:SetPoint("BOTTOMLEFT", 22, 22)
-    note:SetWidth(PAGE_WIDTH - 44)
+    note:SetPoint("BOTTOMRIGHT", -22, 22)
     note:SetText(L["Buy back works while a vendor is open, for items still in its buyback list "
         .. "(the last 12 items you sold)."])
 end
@@ -2176,10 +2265,11 @@ local function DropdownWithButton(parent, dropdown, button)
     return holder
 end
 
-local function BuildProfilesPage(page)
+-- The Profile and Manage profiles cards, for the General page.
+local function AddProfileCards(addCard)
     local copySource, deleteTarget
 
-    CreateCardPage(page, function(addCard)
+    do
         local card, finish = addCard(L["Profile"])
         AddRow(card, L["Active profile"], L["The settings, auto-sell list and filters this character uses."],
             function(parent)
@@ -2218,7 +2308,7 @@ local function BuildProfilesPage(page)
             end)
         finish()
 
-        card, finish = addCard(L["Manage"])
+        card, finish = addCard(L["Manage profiles"])
         AddRow(card, L["Copy from"], L["Replace the active profile's settings and lists with a copy of another profile."],
             function(parent)
                 local dropdown
@@ -2267,6 +2357,36 @@ local function BuildProfilesPage(page)
                 return DropdownWithButton(parent, dropdown, delete)
             end)
         finish()
+    end
+end
+
+local MESSAGE_STYLES = { { "goblin", L["Goblin"] }, { "plain", L["Plain"] }, { "off", L["Off"] } }
+
+local function BuildGeneralPage(page)
+    CreateCardPage(page, function(addCard)
+        local card, finish = addCard(L["Interface"])
+        AddRow(card, L["Show minimap button"], L["Left-click opens the list, right-click the settings."],
+            SettingToggle("showMinimap", ns.UpdateMinimapButton))
+        AddRow(card, L["Explain in tooltips"],
+            L["Items in your bags say whether they'll be sold or kept, why, and what the stack sells for."],
+            SettingToggle("tooltipValue"))
+        finish()
+
+        card, finish = addCard(L["Chat messages"])
+        AddRow(card, L["How your goblin talks"],
+            L["Goblin: messages in its own words, its mood under the title and a cheer at sales milestones. "
+                .. "Plain: short, plain messages. Off: only the summaries after selling, repairing and buying back."],
+            function(parent)
+                return CreateSegmented(parent, MESSAGE_STYLES,
+                    function() return ns.db.messages end,
+                    function(style)
+                        ns.db.messages = style
+                        ns.RefreshWindow()
+                    end)
+            end)
+        finish()
+
+        AddProfileCards(addCard)
     end)
 end
 
@@ -2280,8 +2400,11 @@ local function BuildAboutPage(page)
             .. "always printed in chat."])
         AddRow(card, L["Destroying"], L["The button on your bags destroys the cheapest junk item, to make room "
             .. "when no vendor is around."])
-        AddRow(card, L["Buying back"], L["The History page lists recent sales. While a vendor is open you can buy "
-            .. "back items still in its buyback list (the last 12 items you sold)."])
+        AddRow(card, L["Buying back"], L["The vendor panel and the History page list recent sales. While a vendor "
+            .. "is open you can buy back items still in its buyback list (the last 12 items you sold), one by one "
+            .. "or all at once."])
+        AddRow(card, L["Suggestions"], L["Sell the same item yourself a few times and the vendor panel offers to "
+            .. "put it on the auto-sell list."])
         finish()
 
         card, finish = addCard(L["Help"])
@@ -2296,7 +2419,8 @@ local function BuildAboutPage(page)
             { "/goblin sell", L["Sell junk now (vendor must be open)"] },
             { "/goblin add, keep, remove <item>", L["Put an item on a list, or take it off, by link or item ID"] },
             { "/goblin list", L["Print your lists in chat"] },
-            { "/goblin minimap, chat", L["Toggle the minimap button or chat messages"] },
+            { "/goblin minimap", L["Show or hide the minimap button"] },
+            { "/goblin chat [goblin|plain|off]", L["Choose how the goblin talks in chat"] },
             { "/goblin profile [name]", L["Show or switch this character's profile"] },
             { "/goblin clear confirm", L["Empty the auto-sell and keep lists"] },
             { "/goblin welcome", L["Show the welcome window again"] },
@@ -2316,10 +2440,7 @@ local BUILDERS = {
     rules = BuildRulesPage,
     vendor = BuildVendorPage,
     bags = BuildBagsPage,
-    destroy = BuildDestroyPage,
-    quest = BuildQuestPage,
     history = BuildHistoryPage,
-    profiles = BuildProfilesPage,
     about = BuildAboutPage,
 }
 
@@ -2349,8 +2470,9 @@ local function Refresh()
         end
     end
     RefreshSellList()
-    if currentPage == "quest" then RefreshQuestList() end
-    if currentPage == "keep" then RefreshKeepList() end
+    if currentPage == "keep" then
+        if keepTab == "quest" then RefreshQuestList() else RefreshKeepList() end
+    end
     if currentPage == "history" then RefreshHistory() end
 end
 
@@ -2369,6 +2491,11 @@ end
 ------------------------------------------------------------------------
 
 function SelectPage(key)
+    local alias = PAGE_ALIASES[key]
+    if alias then
+        key = alias[1]
+        if alias[2] then SetKeepTab(alias[2]) end
+    end
     currentPage = key
     for _, page in ipairs(PAGES) do
         if page.key then
@@ -2386,9 +2513,10 @@ function SelectPage(key)
     ns.RefreshWindow() -- the quest gear list only refreshes while it's shown
 end
 
+-- A sidebar entry. Long subtitles wrap onto more lines and the button grows
+-- to fit; returns its height.
 local function CreateNavButton(parent, page, y)
     local nav = CreateFrame("Button", nil, parent)
-    nav:SetSize(SIDEBAR_WIDTH - 20, NAV_HEIGHT)
     nav:SetPoint("TOPLEFT", 10, y)
 
     nav.selected = Rounded(nav, "BACKGROUND", C.goldDim)
@@ -2404,14 +2532,18 @@ local function CreateNavButton(parent, page, y)
     nav.icon:SetPoint("LEFT", 16, 0)
 
     nav.title = Text(nav, 15, C.text)
-    nav.title:SetPoint("BOTTOMLEFT", nav, "LEFT", 48, 1)
     nav.title:SetText(page.title)
 
     local subtitle = Text(nav, 11, C.muted)
-    subtitle:SetPoint("TOPLEFT", nav, "LEFT", 48, -3)
+    subtitle:SetPoint("TOPLEFT", nav.title, "BOTTOMLEFT", 0, -4)
     subtitle:SetWidth(SIDEBAR_WIDTH - 20 - 56)
-    subtitle:SetWordWrap(false)
     subtitle:SetText(page.subtitle)
+
+    -- Title and subtitle centred together, with at least NAV_HEIGHT.
+    local textHeight = nav.title:GetStringHeight() + 4 + subtitle:GetStringHeight()
+    local height = math.max(NAV_HEIGHT, math.ceil(textHeight) + 12)
+    nav:SetSize(SIDEBAR_WIDTH - 20, height)
+    nav.title:SetPoint("TOPLEFT", 48, -(height - textHeight) / 2)
 
     nav:SetScript("OnEnter", function() if currentPage ~= page.key then hover:Show() end end)
     nav:SetScript("OnLeave", function() hover:Hide() end)
@@ -2421,6 +2553,59 @@ local function CreateNavButton(parent, page, y)
         SelectPage(page.key)
     end)
     navButtons[page.key] = nav
+    return height
+end
+
+-- Remembers the window's size and position (for all characters).
+local function SaveWindowGeometry()
+    local point, _, relativePoint, x, y = window:GetPoint(1)
+    PocketGoblinDB.window = {
+        point = point, relativePoint = relativePoint, x = x, y = y,
+        width = window:GetWidth(), height = window:GetHeight(),
+    }
+end
+
+local function SetResizeBounds(frame, minWidth, minHeight, maxWidth, maxHeight)
+    if frame.SetResizeBounds then
+        frame:SetResizeBounds(minWidth, minHeight, maxWidth, maxHeight)
+    else -- older clients
+        frame:SetMinResize(minWidth, minHeight)
+        frame:SetMaxResize(maxWidth, maxHeight)
+    end
+end
+
+-- Keeps the window on the screen: no bigger than the screen, and scaled
+-- down when even its smallest size doesn't fit (small screens, large UI
+-- scale). minHeight is what the sidebar needs.
+local minHeight = HEIGHT
+local function FitToScreen()
+    local screenWidth, screenHeight = UIParent:GetWidth() - SCREEN_MARGIN, UIParent:GetHeight() - SCREEN_MARGIN
+    local scale = math.min(1, screenWidth / WIDTH, screenHeight / minHeight)
+    window:SetScale(scale)
+    local maxWidth, maxHeight = math.max(WIDTH, screenWidth / scale), math.max(minHeight, screenHeight / scale)
+    SetResizeBounds(window, WIDTH, minHeight, maxWidth, maxHeight)
+    window:SetSize(math.max(WIDTH, math.min(window:GetWidth(), maxWidth)),
+        math.max(minHeight, math.min(window:GetHeight(), maxHeight)))
+end
+
+-- Drag handle in the bottom-right corner.
+local function CreateResizeGrip()
+    local grip = CreateFrame("Button", nil, window)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", -3, 3)
+    grip:SetFrameLevel(window:GetFrameLevel() + 50)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then window:StartSizing("BOTTOMRIGHT") end
+    end)
+    grip:SetScript("OnMouseUp", function()
+        window:StopMovingOrSizing()
+        SaveWindowGeometry()
+    end)
+    grip:SetScript("OnEnter", function(self) ShowTooltip(self, L["Drag to resize"]) end)
+    grip:SetScript("OnLeave", GameTooltip_Hide)
 end
 
 local function CreateHeader()
@@ -2431,7 +2616,10 @@ local function CreateHeader()
     header:EnableMouse(true)
     header:RegisterForDrag("LeftButton")
     header:SetScript("OnDragStart", function() window:StartMoving() end)
-    header:SetScript("OnDragStop", function() window:StopMovingOrSizing() end)
+    header:SetScript("OnDragStop", function()
+        window:StopMovingOrSizing()
+        SaveWindowGeometry()
+    end)
 
     local logo = Icon(header, "logo", 48, C.gold)
     logo:SetPoint("LEFT", 16, 0)
@@ -2456,13 +2644,16 @@ local function CreateHeader()
     subtitle:SetPoint("TOPLEFT", logo, "RIGHT", 14, -4)
     subtitle:SetWidth(WIDTH - 16 - 48 - 14 - 70)
     subtitle:SetWordWrap(false)
+    header:SetScript("OnSizeChanged", function(_, width)
+        if width > 0 then subtitle:SetWidth(width - 16 - 48 - 14 - 70) end
+    end)
 
     -- The goblin's face and the subtitle follow its mood.
     local mood = {}
     function mood:Update()
         local key, text = ns.GetMood()
         logo:SetTexture(MEDIA .. ns.MOOD_LOGOS[key])
-        subtitle:SetText(ns.db.goblinVoice and text or L["Sells your junk at vendors"])
+        subtitle:SetText(ns.GoblinVoice() and text or L["Sells your junk at vendors"])
     end
     mood:Update()
     toggles[#toggles + 1] = mood
@@ -2485,12 +2676,19 @@ end
 
 local function CreateWindow()
     window = CreateFrame("Frame", "PocketGoblinFrame", UIParent, "BackdropTemplate")
-    window:SetSize(WIDTH, HEIGHT)
-    window:SetPoint("CENTER")
+    local saved = PocketGoblinDB.window
+    window:SetSize(saved and saved.width or WIDTH, saved and saved.height or HEIGHT)
+    if saved and saved.point then
+        window:SetPoint(saved.point, UIParent, saved.relativePoint, saved.x, saved.y)
+    else
+        window:SetPoint("CENTER")
+    end
     window:SetFrameStrata("DIALOG")
     window:SetToplevel(true)
     window:SetClampedToScreen(true)
     window:SetMovable(true)
+    window:SetResizable(true)
+    if window.SetDontSavePosition then window:SetDontSavePosition(true) end -- saved by us instead
     window:EnableMouse(true)
     window:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -2542,8 +2740,7 @@ local function CreateWindow()
             heading:SetText(page.section)
             y = y - SECTION_HEIGHT
         else
-            CreateNavButton(sidebar, page, y)
-            y = y - NAV_SPACING
+            y = y - CreateNavButton(sidebar, page, y) - (NAV_SPACING - NAV_HEIGHT)
             local frame = CreateFrame("Frame", nil, window)
             frame:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 0, 0)
             frame:SetPoint("BOTTOMRIGHT", -1, 1)
@@ -2553,22 +2750,31 @@ local function CreateWindow()
         end
     end
     SelectPage("list")
+    minHeight = HEADER_HEIGHT - y + 8 -- tall enough for the whole sidebar
+    CreateResizeGrip()
 
     window:SetScript("OnShow", function(self)
         if not InCombatLockdown() then self:SetPropagateKeyboardInput(true) end
         self:RegisterEvent("GET_ITEM_INFO_RECEIVED")
         self:RegisterEvent("CURSOR_CHANGED")
+        self:RegisterEvent("DISPLAY_SIZE_CHANGED")
+        self:RegisterEvent("UI_SCALE_CHANGED")
+        FitToScreen()
         UpdateDropOverlay()
         Refresh()
     end)
     window:SetScript("OnHide", function(self)
         self:UnregisterEvent("GET_ITEM_INFO_RECEIVED")
         self:UnregisterEvent("CURSOR_CHANGED")
+        self:UnregisterEvent("DISPLAY_SIZE_CHANGED")
+        self:UnregisterEvent("UI_SCALE_CHANGED")
         for _, overlay in pairs(dropOverlays) do overlay:Hide() end
     end)
     window:SetScript("OnEvent", function(_, event)
         if event == "CURSOR_CHANGED" then
             UpdateDropOverlay()
+        elseif event == "DISPLAY_SIZE_CHANGED" or event == "UI_SCALE_CHANGED" then
+            FitToScreen()
         else
             ns.RefreshWindow()
         end
@@ -2722,8 +2928,7 @@ local function WelcomeSummary()
     if db.sellCheapWhites then
         sells[#sells + 1] = L["White items worth less than "] .. GetMoneyString(db.cheapWhiteLimit, true)
     end
-    if db.sellUnusable then sells[#sells + 1] = L["Soulbound gear your class can't use"] end
-    if db.sellOutgrown then sells[#sells + 1] = L["Soulbound gear you've outgrown"] end
+    if db.sellSoulbound then sells[#sells + 1] = L["Soulbound gear your class can't use or you've outgrown"] end
     sells[#sells + 1] = L["Anything you put on the auto-sell list"]
 
     if db.autoSell then

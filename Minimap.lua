@@ -18,7 +18,7 @@ end
 local function ShowTooltip(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:SetText("Pocket Goblin", 1, 1, 1)
-    if ns.db.goblinVoice then
+    if ns.GoblinVoice() then
         local _, mood = ns.GetMood()
         GameTooltip:AddLine(mood, 1, 0.82, 0.5, true)
     end

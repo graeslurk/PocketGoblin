@@ -2400,6 +2400,8 @@ local function BuildAboutPage(page)
         AddRow(card, L["Flag items"], L["Alt+Right-click an item in your bags, or drag it onto the auto-sell list."])
         AddRow(card, L["Keep an item"], L["Alt+Right-click it and choose \"Never sell\". Kept items are never "
             .. "sold or destroyed."])
+        AddRow(card, L["Hotkeys"], L["Set keys under Pocket Goblin in the game's Key Bindings: auto-sell or "
+            .. "keep the item under your mouse, or destroy the cheapest junk."])
         AddRow(card, L["Selling"], L["Junk is sold when you open a vendor. A summary of what you earned is "
             .. "always printed in chat."])
         AddRow(card, L["Destroying"], L["The button on your bags destroys the cheapest junk item, to make room "
@@ -3041,7 +3043,7 @@ function ns.ShowWelcome()
     y, used = WelcomeSection(y, L["WHAT YOUR GOBLIN WILL SELL"], sells, used)
     y, used = WelcomeSection(y, L["IT ALSO"], also, used)
     y, used = WelcomeSection(y, L["GOOD TO KNOW"], {
-        L["Alt+Right-click any item in your bags to auto-sell it or keep it."],
+        L["Alt+Right-click any item in your bags to auto-sell it or keep it, or set hotkeys in Key Bindings."],
         L["Open Pocket Goblin with /goblin or the minimap button."],
     }, used)
     welcome:SetHeight(-y + 60)

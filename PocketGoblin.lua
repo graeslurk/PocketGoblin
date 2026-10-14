@@ -813,6 +813,42 @@ local function GetHoveredItem()
     end
 end
 
+-- Key bindings (Bindings.xml): toggle a list for the item under the mouse,
+-- like the checkboxes in the Alt+Right-click menu. They get their own
+-- "Pocket Goblin" section in the game's Key Bindings.
+BINDING_NAME_POCKETGOBLIN_SELL = L["Auto-sell the item under the mouse"]
+BINDING_NAME_POCKETGOBLIN_KEEP = L["Keep the item under the mouse"]
+
+local function ToggleHovered(toggle)
+    if not db then return end
+    local itemID = GetHoveredItem()
+    if not itemID then return end
+    if select(11, C_Item.GetItemInfo(itemID)) == 0 then
+        Notify(L["%s can't be sold to vendors."], ItemLabel(itemID))
+        return
+    end
+    toggle(itemID)
+end
+
+function PocketGoblin_ToggleSellHovered() ToggleHovered(ToggleSell) end
+function PocketGoblin_ToggleKeepHovered() ToggleHovered(ToggleKeep) end
+
+-- Like clicking the trash can (the key press counts as the hardware event
+-- deleting needs), but says why when there's nothing to destroy.
+BINDING_NAME_POCKETGOBLIN_DESTROY = L["Destroy cheapest junk"]
+
+function PocketGoblin_DestroyCheapestJunk()
+    if not db then return end
+    local target, protected = ns.FindCheapestJunk()
+    if target then
+        ns.DestroyCheapestJunk()
+    elseif protected > 0 then
+        Print(L["All your junk is worth more than your limit of %s."], GetMoneyString(db.destroyLimit, true))
+    else
+        Print(L["No junk in your bags."])
+    end
+end
+
 ------------------------------------------------------------------------
 -- Selling
 ------------------------------------------------------------------------

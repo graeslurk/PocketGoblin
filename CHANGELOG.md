@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+New:
+- **Hotkeys** to put the item under your mouse on the auto-sell list or the keep list, without the Alt+Right-click menu. Set them in the game's Key Bindings, under Pocket Goblin. Press the key again to take the item off the list
+- A **hotkey to destroy the cheapest junk**, the same as clicking the trash can (it asks first unless you've turned that off)
+
 ## 1.3.0
 
 New look:

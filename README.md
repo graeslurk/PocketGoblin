@@ -26,6 +26,7 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 ## Features
 
 - **Alt+Right-click** any item in your bags to put it on the auto-sell list or the keep list
+- **Hotkeys** in the game's Key Bindings (Pocket Goblin): auto-sell or keep the item under your mouse, or destroy the cheapest junk
 - **Vendor panel** next to the vendor window: a *Sell junk* button, and buyback of anything you sold, one item at a time or all at once
 - **Suggestions**: sell the same item yourself a few times and your goblin offers to auto-sell it
 - **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs

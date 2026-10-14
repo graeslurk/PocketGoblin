@@ -2626,7 +2626,7 @@ local function CreateHeader()
         SaveWindowGeometry()
     end)
 
-    local logo = Icon(header, "logo", 48, C.gold)
+    local logo = Icon(header, "emblem", 48, C.white)
     logo:SetPoint("LEFT", 16, 0)
 
     local title = Text(header, 26, C.text)
@@ -2646,19 +2646,30 @@ local function CreateHeader()
     toggles[#toggles + 1] = profile
 
     local subtitle = Text(header, 13, C.muted)
-    subtitle:SetPoint("TOPLEFT", logo, "RIGHT", 14, -4)
-    subtitle:SetWidth(WIDTH - 16 - 48 - 14 - 70)
     subtitle:SetWordWrap(false)
-    header:SetScript("OnSizeChanged", function(_, width)
-        if width > 0 then subtitle:SetWidth(width - 16 - 48 - 14 - 70) end
-    end)
+
+    -- The emblem has a single face, so the goblin's mood face sits in front
+    -- of the mood line instead.
+    local face = Icon(header, "logo", 18, C.gold)
+    face:SetPoint("TOPLEFT", logo, "RIGHT", 14, -2)
+
+    local function LayoutSubtitle()
+        local indent = face:IsShown() and 18 + 5 or 0
+        local width = header:GetWidth()
+        subtitle:SetPoint("TOPLEFT", logo, "RIGHT", 14 + indent, -4)
+        subtitle:SetWidth((width > 0 and width or WIDTH) - 16 - 48 - 14 - 70 - indent)
+    end
+    header:SetScript("OnSizeChanged", LayoutSubtitle)
 
     -- The goblin's face and the subtitle follow its mood.
     local mood = {}
     function mood:Update()
         local key, text = ns.GetMood()
-        logo:SetTexture(MEDIA .. ns.MOOD_LOGOS[key])
-        subtitle:SetText(ns.GoblinVoice() and text or L["Sells your junk at vendors"])
+        local voice = ns.GoblinVoice()
+        face:SetTexture(MEDIA .. ns.MOOD_LOGOS[key])
+        face:SetShown(voice)
+        subtitle:SetText(voice and text or L["Sells your junk at vendors"])
+        LayoutSubtitle()
     end
     mood:Update()
     toggles[#toggles + 1] = mood
@@ -2846,7 +2857,7 @@ local function CreateCopyWindow()
     copyWindow:Hide()
     CloseOnEscape(copyWindow)
 
-    local logo = Icon(copyWindow, "logo", 24, C.gold)
+    local logo = Icon(copyWindow, "emblem-mono", 24, C.gold)
     logo:SetPoint("TOPLEFT", 16, -14)
     copyWindow.title = Text(copyWindow, 15, C.text)
     copyWindow.title:SetPoint("LEFT", logo, "RIGHT", 8, 0)
@@ -2966,7 +2977,7 @@ local function CreateWelcome()
     CloseOnEscape(welcome)
     welcome:SetScript("OnHide", function() PocketGoblinDB.welcomed = true end)
 
-    local logo = Icon(welcome, "logo", 56, C.gold)
+    local logo = Icon(welcome, "emblem", 56, C.white)
     logo:SetPoint("TOPLEFT", 20, -18)
     local title = Text(welcome, 22, C.text)
     title:SetPoint("BOTTOMLEFT", logo, "RIGHT", 14, 0)

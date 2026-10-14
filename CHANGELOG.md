@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0
+
+New look:
+- **New logo**: a goblin peeking out of a pot of gold, in full colour in the settings window and the welcome window
+- The vendor panel, minimap button and AddOns list use a gold version of the new logo
+- The goblin's mood faces are bigger and clearer, and sit next to its mood under the settings title
+
 ## 1.2.1
 
 Fixed:

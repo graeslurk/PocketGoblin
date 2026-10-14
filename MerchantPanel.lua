@@ -96,7 +96,7 @@ local function CreatePanel()
     panel:EnableMouse(true)
     panel:Hide()
 
-    local logo = UI.Icon(panel, "logo", 22, C.gold)
+    local logo = UI.Icon(panel, "emblem-mono", 22, C.gold)
     logo:SetPoint("TOPLEFT", 12, -11)
     local title = UI.Text(panel, 14, C.text)
     title:SetPoint("LEFT", logo, "RIGHT", 8, 0)

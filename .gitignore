@@ -1,4 +1,4 @@
-# Node packages for tools/localize.js (npm install luaparse)
+# Node packages for tools/localize.js and tools/make_emblem.js
 node_modules/
 package-lock.json
 

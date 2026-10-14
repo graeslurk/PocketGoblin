@@ -2,7 +2,9 @@
 """Generates Pocket Goblin's UI textures (white shapes, tinted in-game).
 
 Shapes are drawn as signed distance fields with 1px anti-aliasing and saved
-as 32-bit TGA, which WoW loads directly. Run from anywhere:
+as 32-bit TGA, which WoW loads directly. The emblem textures, the AddOns
+list icon and the project logo come from tools/make_emblem.js instead.
+Run from anywhere:
 
     python3 tools/make_media.py
 """
@@ -10,10 +12,8 @@ as 32-bit TGA, which WoW loads directly. Run from anywhere:
 import math
 import os
 import struct
-import zlib
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Media")
-ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Art")  # not packaged
 
 
 # --- SDF primitives (negative inside) -----------------------------------
@@ -92,49 +92,6 @@ def render(name, width, height, sdf, color=(255, 255, 255)):
     header = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, width, height, 32, 0x28)
     with open(os.path.join(OUT, name + ".tga"), "wb") as f:
         f.write(header + pixels)
-
-
-def write_png(path, size, pixels):
-    """pixels: bytes of RGBA rows, top to bottom."""
-    def chunk(kind, data):
-        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
-    raw = b"".join(b"\x00" + pixels[y * size * 4:(y + 1) * size * 4] for y in range(size))
-    with open(path, "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n")
-        f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)))
-        f.write(chunk(b"IDAT", zlib.compress(raw, 9)))
-        f.write(chunk(b"IEND", b""))
-
-
-def render_project_logo(path, size, logo):
-    """Project logo for CurseForge/GitHub: the gold goblin on a dark rounded
-    square with a soft gold frame."""
-    def clamp(v):
-        return max(0.0, min(1.0, v))
-
-    def mix(a, b, t):
-        return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
-
-    pad = size * 0.15
-    scale = (size - 2 * pad) / 64  # the logo is drawn on a 64-unit grid
-    shift_x, shift_y = -2.5, 3.5    # centres the drawing (it sits up and left on its grid)
-    half = size / 2
-    gold_top, gold_bottom = (244, 204, 96), (186, 138, 32)
-    pixels = bytearray()
-    for y in range(size):
-        for x in range(size):
-            px, py = x + 0.5, y + 0.5
-            square = round_rect(px, py, half, half, half, half, size * 0.19)
-            # background: lighter towards the top centre
-            light = clamp(math.hypot(px - half, py - size * 0.4) / (size * 0.75))
-            color = mix((30, 31, 37), (11, 12, 14), light)
-            frame = abs(square + size * 0.016) - size * 0.005
-            color = mix(color, (212, 167, 44), clamp(0.5 - frame) * 0.6)
-            shape = logo((px - pad) / scale + shift_x, (py - pad) / scale + shift_y) * scale
-            gold = mix(gold_top, gold_bottom, clamp((py - pad) / (size - 2 * pad)))
-            color = mix(color, gold, clamp(0.5 - shape))
-            pixels += bytes((round(color[0]), round(color[1]), round(color[2]), round(clamp(0.5 - square) * 255)))
-    write_png(path, size, bytes(pixels))
 
 
 def main():
@@ -246,8 +203,8 @@ def main():
         return min(bars, arrow)
     render("icon-sort", 32, 32, sort)
 
-    # Logo: a goblin head with long pointed ears, slanted eyes and a grin,
-    # holding up a big coin. One flat shape with cut-outs for the details.
+    # Mood faces: a goblin head with long pointed ears, slanted eyes and a
+    # grin. One flat shape with cut-outs for the details.
     # Goblin face cut-outs for each mood, drawn around (26, 31).
     def happy_face(x, y):  # mischievous eyes, grin
         eyes = min(capsule(x, y, 19.5, 28.5, 23.5, 31, 2.1), capsule(x, y, 28.5, 31, 32.5, 28.5, 2.1))
@@ -270,23 +227,21 @@ def main():
 
     def goblin(x, y, face):
         head = ellipse(x, y, 26, 31, 12.5, 13.5)
-        left_ear = polygon(x, y, [(17, 25), (16, 35), (3.5, 17)])
-        right_ear = polygon(x, y, [(35, 25), (36, 35), (48.5, 17)])
+        left_ear = polygon(x, y, [(17, 25), (16, 35), (5, 15)])
+        right_ear = polygon(x, y, [(35, 25), (36, 35), (47, 15)])
         shape = min(head, left_ear, right_ear)
         return max(shape, -face(x, y))
 
     def snore(x, y):  # a small "z" above the head
-        return min(capsule(x, y, 36, 2.5, 41, 2.5, 1), capsule(x, y, 41, 2.5, 36, 7.5, 1),
-                   capsule(x, y, 36, 7.5, 41, 7.5, 1))
+        return min(capsule(x, y, 34, 2.5, 41, 2.5, 1.3), capsule(x, y, 41, 2.5, 34, 9.5, 1.3),
+                   capsule(x, y, 34, 9.5, 41, 9.5, 1.3))
 
     def logo_with(face, extra=None):
         def logo(x, y):
-            scale = 1.15  # the goblin, enlarged and moved up to fill the icon
-            head = goblin(26 + (x - 26) / scale, 31 + (y - 26) / scale, face) * scale
-            head = max(head, -circle(x, y, 46, 48, 15.5))  # gap around the coin
-            coin = circle(x, y, 46, 48, 13)
-            coin = max(coin, -ring(x, y, 46, 48, 9, 2.2))
-            shape = min(head, coin)
+            # The goblin spans x 5-47 and y 15-44.5: scaled to the icon's
+            # width and centred on it.
+            scale = 1.42
+            shape = goblin(26 + (x - 32) / scale, 29.75 + (y - 32) / scale, face) * scale
             return min(shape, extra(x, y)) if extra else shape
         return logo
 
@@ -295,11 +250,6 @@ def main():
     render("logo-eager", 64, 64, logo_with(eager_face))
     render("logo-worried", 64, 64, logo_with(worried_face))
     render("logo-sleepy", 64, 64, logo_with(sleepy_face, snore))
-    os.makedirs(ART, exist_ok=True)
-    render_project_logo(os.path.join(ART, "pocket-goblin-logo.png"), 512, logo)
-
-    # Full-colour copy for the AddOns list and the minimap button.
-    render("icon", 64, 64, logo, color=(212, 167, 44))
 
 
 if __name__ == "__main__":

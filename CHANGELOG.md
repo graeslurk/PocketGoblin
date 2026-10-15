@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.2
+
+New look:
+- The **logo** has a deep navy background instead of white, so the goblin and his gold stand out. The settings and welcome windows use it too
+
 ## 1.4.1
 
 Changed:

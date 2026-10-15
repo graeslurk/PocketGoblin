@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Renders the emblem (Art/pocket-goblin-logo.svg) for Pocket Goblin:
 //
-//   Media/emblem.tga             128x128 full colour (dark disc), shown in-game at 48-56px
+//   Media/emblem.tga             128x128 full colour (navy disc), shown in-game at 48-56px
 //   Media/emblem-mono.tga        64x64 white shape, tinted gold in-game at 22-24px
 //   Media/icon.tga               64x64 gold shape, for the AddOns list and minimap button
-//   Art/pocket-goblin-logo.png   512x512, the CurseForge/GitHub project logo
+//   Art/pocket-goblin-logo.png   512x512 full colour (navy disc), the CurseForge/GitHub project logo
 //
 //   node tools/make_emblem.js
 //
@@ -23,16 +23,20 @@ const FILLED = ['#EFB03D', '#E39C35', '#B17230', '#5FB48E', '#5BAB82'];
 // The ring starts here (as a fraction of the radius) and is left off the
 // one-colour version, so the goblin and pot fill the small icons.
 const RING = 0.88;
-// In-game the white disc behind the goblin is darkened to sit with the dark
-// theme; the project logo keeps it white.
-const DISC = '#2A2014';
+// The drawing's white disc behind the goblin becomes deep navy, lighter in
+// the middle: the gold and green stand out on it, and it sets Pocket Goblin
+// apart from the other addons' logos. Used in-game and for the project logo.
+const DISC = '<radialGradient id="disc" cx="50%" cy="45%" r="60%">'
+  + '<stop offset="0" stop-color="#2C3B66"/><stop offset="1" stop-color="#141B33"/></radialGradient>';
 
 // The disc is the large white paths; the small ones are teeth and eye whites.
-function darkDisc(source) {
-  return source.replace(/<path fill="#FEFEFD" d="([^"]*)"/g, (path, d) => {
-    const xs = d.match(/-?\d+(?:\.\d+)?/g).map(Number).filter((_, i) => i % 2 === 0);
-    return Math.max(...xs) - Math.min(...xs) > 300 ? `<path fill="${DISC}" d="${d}"` : path;
-  });
+function navyDisc(source) {
+  return source
+    .replace(/<path fill="#FEFEFD" d="([^"]*)"/g, (path, d) => {
+      const xs = d.match(/-?\d+(?:\.\d+)?/g).map(Number).filter((_, i) => i % 2 === 0);
+      return Math.max(...xs) - Math.min(...xs) > 300 ? `<path fill="url(#disc)" d="${d}"` : path;
+    })
+    .replace(/(<svg[^>]*>)/, `$1<defs>${DISC}</defs>`);
 }
 
 function render(source, size) {
@@ -115,8 +119,9 @@ function tinted(coverage, [r, g, b]) {
   return rgba;
 }
 
-writeTga(path.join(ROOT, 'Media', 'emblem.tga'), 128, colourPixels(darkDisc(svg), 128));
+const logo = navyDisc(svg);
+writeTga(path.join(ROOT, 'Media', 'emblem.tga'), 128, colourPixels(logo, 128));
 const mono = monoCoverage(64);
 writeTga(path.join(ROOT, 'Media', 'emblem-mono.tga'), 64, tinted(mono, [255, 255, 255]));
 writeTga(path.join(ROOT, 'Media', 'icon.tga'), 64, tinted(mono, [212, 167, 44])); // not tinted in-game
-fs.writeFileSync(path.join(ROOT, 'Art', 'pocket-goblin-logo.png'), render(svg, 512).asPng());
+fs.writeFileSync(path.join(ROOT, 'Art', 'pocket-goblin-logo.png'), render(logo, 512).asPng());

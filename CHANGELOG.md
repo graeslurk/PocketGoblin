@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+
+Changed:
+- The **auto-sell and keep hotkeys only add** an item to their list. Pressing one again on an item that's already there leaves it on the list (and says so), instead of taking it off. The other hotkey still moves an item between the lists; to take an item off a list, use the Alt+Right-click menu
+
 ## 1.4.0
 
 New:

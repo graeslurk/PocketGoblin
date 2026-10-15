@@ -39,6 +39,8 @@ ns.AddTranslations("xxXX", {
     ["%s added to your keep list. It will never be sold."] = "",
     ["%s can't be sold to vendors."] = "",
     ["%s for repairs. Highway robbery, but it's done."] = "",
+    ["%s is already on the auto-sell list."] = "",
+    ["%s is already on your keep list."] = "",
     ["%s is back in your bags. Sentimental, are we?"] = "",
     ["%s is gone. Worth %s, so who's counting?"] = "",
     ["%s is no longer flagged."] = "",

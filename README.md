@@ -26,7 +26,7 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 ## Features
 
 - **Alt+Right-click** any item in your bags to put it on the auto-sell list or the keep list
-- **Hotkeys** in the game's Key Bindings (Pocket Goblin): auto-sell or keep the item under your mouse, or destroy the cheapest junk
+- **Hotkeys** in the game's Key Bindings (Pocket Goblin): put the item under your mouse on the auto-sell or keep list, or destroy the cheapest junk. Pressing a key again leaves the item where it is, so a quick tap is always safe
 - **Vendor panel** next to the vendor window: a *Sell junk* button, and buyback of anything you sold, one item at a time or all at once
 - **Suggestions**: sell the same item yourself a few times and your goblin offers to auto-sell it
 - **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs
@@ -66,7 +66,7 @@ Hi, I'm Graeslurk! I play WoW Forever and got tired of clicking through
 vendor windows to sell junk, so I built a goblin to do it for me. Pocket
 Goblin is my first addon, and I'm working on it in my spare time.
 
-Bug reports and ideas are very welcome: open an issue here on GitHub (include
+Bug reports and ideas are very welcome: open an issue on GitHub (include
 the text from `/goblin debug`).
 
 If Pocket Goblin saves you some clicks and you'd like to say thanks, you can

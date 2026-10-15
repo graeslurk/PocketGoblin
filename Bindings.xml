@@ -1,9 +1,9 @@
 <Bindings>
     <Binding name="POCKETGOBLIN_SELL" category="Pocket Goblin">
-        PocketGoblin_ToggleSellHovered()
+        PocketGoblin_SellHovered()
     </Binding>
     <Binding name="POCKETGOBLIN_KEEP" category="Pocket Goblin">
-        PocketGoblin_ToggleKeepHovered()
+        PocketGoblin_KeepHovered()
     </Binding>
     <Binding name="POCKETGOBLIN_DESTROY" category="Pocket Goblin">
         PocketGoblin_DestroyCheapestJunk()

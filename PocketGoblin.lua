@@ -813,13 +813,34 @@ local function GetHoveredItem()
     end
 end
 
--- Key bindings (Bindings.xml): toggle a list for the item under the mouse,
--- like the checkboxes in the Alt+Right-click menu. They get their own
--- "Pocket Goblin" section in the game's Key Bindings.
+-- Key bindings (Bindings.xml): put the item under the mouse on a list. They
+-- get their own "Pocket Goblin" section in the game's Key Bindings.
+--
+-- Unlike the menu's checkboxes, a key only ever adds: pressing it again on
+-- an item that's already on the list leaves it there, so a quick tap on
+-- something you marked earlier (say, a loot toast) can't undo it. The other
+-- key moves the item to the other list; taking it off a list altogether is
+-- for the Alt+Right-click menu, which shows where it is.
 BINDING_NAME_POCKETGOBLIN_SELL = L["Auto-sell the item under the mouse"]
 BINDING_NAME_POCKETGOBLIN_KEEP = L["Keep the item under the mouse"]
 
-local function ToggleHovered(toggle)
+local function MarkSell(itemID)
+    if db.items[itemID] == true then
+        Notify(L["%s is already on the auto-sell list."], ItemLabel(itemID))
+    else
+        SetFlag(itemID, true)
+    end
+end
+
+local function MarkKeep(itemID)
+    if db.items[itemID] == false then
+        Notify(L["%s is already on your keep list."], ItemLabel(itemID))
+    else
+        SetFlag(itemID, false)
+    end
+end
+
+local function MarkHovered(mark)
     if not db then return end
     local itemID = GetHoveredItem()
     if not itemID then return end
@@ -827,11 +848,11 @@ local function ToggleHovered(toggle)
         Notify(L["%s can't be sold to vendors."], ItemLabel(itemID))
         return
     end
-    toggle(itemID)
+    mark(itemID)
 end
 
-function PocketGoblin_ToggleSellHovered() ToggleHovered(ToggleSell) end
-function PocketGoblin_ToggleKeepHovered() ToggleHovered(ToggleKeep) end
+function PocketGoblin_SellHovered() MarkHovered(MarkSell) end
+function PocketGoblin_KeepHovered() MarkHovered(MarkKeep) end
 
 -- Like clicking the trash can (the key press counts as the hardware event
 -- deleting needs), but says why when there's nothing to destroy.

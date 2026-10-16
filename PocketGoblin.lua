@@ -19,6 +19,7 @@ local ARMOR = Enum.ItemClass and Enum.ItemClass.Armor or 4
 local FISHING_POLE = Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Fishingpole or 20
 local THROWN = Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Thrown or 16
 local REAGENT = Enum.ItemClass and Enum.ItemClass.Reagent or 5
+local RECIPE = Enum.ItemClass and Enum.ItemClass.Recipe or 9
 -- Profession and class tools no rule sells. Some count as weapons in Classic
 -- (Mining Pick, Blacksmith Hammer, Skinning Knife, Arclight Spanner); the rest
 -- are cheap white items (Thieves' Tools, Flint and Tinder, enchanting rods,
@@ -83,6 +84,8 @@ local defaults = {
     oldFoodMinBetter = 5,  -- ...and at least this many of it
     sellSoulbound = false, -- sell soulbound gear this class can never use, or far below its level...
     outgrownLevels = 15,   -- ...by at least this many levels
+    sellLighterArmor = false, -- sell soulbound cloth, leather or mail lighter than the heaviest armor you wear
+    sellKnownRecipes = false, -- sell recipes this character already knows
     merchantPanel = true,  -- sell and buyback panel next to the vendor window
     autoRepair = true,     -- repair at vendors that can
     repairGuild = false,   -- use guild bank funds first
@@ -91,6 +94,8 @@ local defaults = {
     destroyButton = true,  -- show the "destroy cheapest junk" button on the bags
     sortButton = true,     -- show the "sort bags" button on the default bags
     destroyConfirm = true, -- ask before destroying
+    lootMakeRoom = true,   -- with full bags, a button on the loot window destroys junk and loots
+    openButton = true,     -- a button on the bags that opens clams, sacks and other containers
     destroyProtect = true, -- never destroy junk worth more than destroyLimit
     destroyLimit = 5000,   -- copper (50 silver); stacks count their total value
     showMinimap = true,
@@ -104,6 +109,9 @@ local defaults = {
     keepClasses = {}, -- [item class ID] = true: never sell items of this type
     keepValuable = false, -- never sell items worth more than keepValueLimit...
     keepValueLimit = 10000, -- ...copper per item (1 gold)
+    protectUpgrades = true, -- never sell gear better than what you wear in its slot
+    keepAuction = true,  -- with an auction addon, never sell items worth auctionFactor times more there...
+    auctionFactor = 2,   -- ...than at a vendor
     keepIcon = true,  -- lock icon on items on the keep list
     addedAt = {},     -- [itemID] = time() it was added to the auto-sell list
     manualSales = {},  -- [itemID] = times you sold it yourself (for auto-sell suggestions)
@@ -193,10 +201,26 @@ local function RefreshWindow()
     if ns.RefreshWindow then ns.RefreshWindow() end
 end
 
+local IsUpgrade, AuctionPrice -- further down, with the class gear and the auction addons
+
+-- True if an item is worth enough more at the auction house to keep it
+-- (with Auctionator or TradeSkillMaster). Never grey items, which always
+-- sell, nor soulbound or bind-on-pickup ones, which can't be auctioned.
+-- Also checked for items on the auto-sell list: prices change.
+local function WorthAuctioning(itemID, bound)
+    if not db.keepAuction or bound then return false end
+    local _, _, quality, _, _, _, _, _, _, _, price, _, _, bindType = C_Item.GetItemInfo(itemID)
+    if not quality or quality == POOR or bindType == 1 then return false end
+    local auction = AuctionPrice(itemID)
+    return auction ~= nil and price ~= nil and auction >= math.max(1, price) * db.auctionFactor
+end
+ns.WorthAuctioning = WorthAuctioning
+
 -- Which keep rule protects an item: "name" (plus the matching word),
--- "type" or "valuable"; nil if none does. Items you flag yourself ignore
--- these rules.
-local function KeepRule(itemID)
+-- "type", "valuable", "upgrade" or "auction"; nil if none does. bound: the
+-- item in your bags is soulbound (so it can't be auctioned). Items you flag
+-- yourself ignore these rules.
+local function KeepRule(itemID, bound)
     if #db.keepWords > 0 then
         local name = C_Item.GetItemInfo(itemID)
         if name then
@@ -212,6 +236,8 @@ local function KeepRule(itemID)
         local price = select(11, C_Item.GetItemInfo(itemID)) or 0
         if price > db.keepValueLimit then return "valuable" end
     end
+    if db.protectUpgrades and IsUpgrade(itemID) then return "upgrade" end
+    if WorthAuctioning(itemID, bound) then return "auction" end
 end
 ns.KeepRule = KeepRule
 
@@ -219,6 +245,8 @@ ns.KeepRule = KeepRule
 function ns.KeepRuleText(rule, word)
     if rule == "name" then return (L['name contains "%s"']):format(word) end
     if rule == "type" then return L["its item type"] end
+    if rule == "upgrade" then return L["an upgrade for you"] end
+    if rule == "auction" then return L["worth more at the auction house"] end
     return L["worth more than "] .. GetMoneyString(db.keepValueLimit, true)
 end
 
@@ -226,6 +254,7 @@ end
 -- quality (for items that aren't in the bags).
 local function IsJunk(itemID, quality)
     local flag = db.items[itemID]
+    if flag == true and WorthAuctioning(itemID) then return false end
     if flag ~= nil then return flag end
     if KeepRule(itemID) then return false end
     return db.sellGreys and quality == POOR
@@ -256,6 +285,112 @@ local function IsWhiteGear(itemID)
         return subClassID ~= FISHING_POLE and subClassID ~= THROWN
     end
     return classID == ARMOR
+end
+
+-- The heaviest armor type you can wear now: PLATE, MAIL, LEATHER or CLOTH.
+-- Warriors and paladins wear mail until they learn plate at 40, hunters
+-- and shamans leather until they learn mail; the armor skills say which.
+local ARMOR_SKILLS = { { PLATE, 750 }, { MAIL, 8737 }, { LEATHER, 9077 }, { CLOTH, 9078 } }
+
+local function HeaviestArmor()
+    CanClassUse(ARMOR, CLOTH) -- fills classUsable
+    if not classUsable then return nil end -- unknown class
+    for _, skill in ipairs(ARMOR_SKILLS) do
+        local armor, spellID = skill[1], skill[2]
+        if classUsable.armor[armor] and IsPlayerSpell and IsPlayerSpell(spellID) then return armor end
+    end
+    -- No skill found (it should be): go by level instead.
+    local class, level = select(2, UnitClass("player")), UnitLevel("player")
+    for _, skill in ipairs(ARMOR_SKILLS) do
+        local armor = skill[1]
+        if classUsable.armor[armor] then
+            if armor == PLATE and level < 40 then armor = MAIL end
+            if armor == MAIL and level < 40 and (class == "HUNTER" or class == "SHAMAN") then armor = LEATHER end
+            return armor
+        end
+    end
+end
+
+-- Which equipment slots an item goes in; two for rings, trinkets and
+-- one-handed weapons.
+local SLOTS_FOR = {
+    INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_SHOULDER = { 3 }, INVTYPE_CHEST = { 5 },
+    INVTYPE_ROBE = { 5 }, INVTYPE_WAIST = { 6 }, INVTYPE_LEGS = { 7 }, INVTYPE_FEET = { 8 },
+    INVTYPE_WRIST = { 9 }, INVTYPE_HAND = { 10 }, INVTYPE_FINGER = { 11, 12 }, INVTYPE_TRINKET = { 13, 14 },
+    INVTYPE_CLOAK = { 15 }, INVTYPE_WEAPON = { 16, 17 }, INVTYPE_2HWEAPON = { 16 },
+    INVTYPE_WEAPONMAINHAND = { 16 }, INVTYPE_WEAPONOFFHAND = { 17 }, INVTYPE_SHIELD = { 17 },
+    INVTYPE_HOLDABLE = { 17 }, INVTYPE_RANGED = { 18 }, INVTYPE_RANGEDRIGHT = { 18 },
+    INVTYPE_THROWN = { 18 }, INVTYPE_RELIC = { 18 },
+}
+
+local function ItemLevel(item)
+    local level = C_Item.GetDetailedItemLevelInfo and C_Item.GetDetailedItemLevelInfo(item)
+    return level or select(4, C_Item.GetItemInfo(item))
+end
+
+-- The item level in an equipment slot; 0 when it's empty. A two-handed
+-- weapon fills the off-hand too.
+local function EquippedLevel(slot)
+    local link = GetInventoryItemLink("player", slot)
+    if not link and slot == 17 then
+        local mainHand = GetInventoryItemLink("player", 16)
+        if mainHand and select(9, C_Item.GetItemInfo(mainHand)) == "INVTYPE_2HWEAPON" then link = mainHand end
+    end
+    return link and ItemLevel(link) or 0
+end
+
+-- True for gear that's better than what you wear in its slot (a higher
+-- item level than the weaker of its slots), or would fill an empty one.
+-- Not grey items, gear your class can't use, or armor lighter than yours.
+function IsUpgrade(itemID)
+    local _, _, quality, _, _, _, _, _, equipLoc = C_Item.GetItemInfo(itemID)
+    local slots = SLOTS_FOR[equipLoc or ""]
+    if not slots or not quality or quality == POOR then return false end
+    local _, _, _, _, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
+    if not CanClassUse(classID, subClassID) then return false end
+    if classID == ARMOR and subClassID >= CLOTH and subClassID <= PLATE and equipLoc ~= "INVTYPE_CLOAK" then
+        local heaviest = HeaviestArmor()
+        if heaviest and subClassID < heaviest then return false end
+    end
+    local level = ItemLevel(itemID)
+    if not level then return false end
+    local weakest
+    for _, slot in ipairs(slots) do
+        local equipped = EquippedLevel(slot)
+        if not weakest or equipped < weakest then weakest = equipped end
+    end
+    return level > weakest
+end
+
+-- The auction house price of an item from Auctionator or TradeSkillMaster,
+-- in copper; nil when neither is installed or knows a price.
+function AuctionPrice(itemID)
+    local auctionator = Auctionator and Auctionator.API and Auctionator.API.v1
+    if auctionator and auctionator.GetAuctionPriceByItemID then
+        local ok, price = pcall(auctionator.GetAuctionPriceByItemID, "Pocket Goblin", itemID)
+        if ok and type(price) == "number" then return price end
+    end
+    if TSM_API and TSM_API.GetCustomPriceValue then
+        local ok, price = pcall(TSM_API.GetCustomPriceValue, "dbmarket", "i:" .. itemID)
+        if ok and type(price) == "number" then return price end
+    end
+end
+
+-- Which auction addon prices come from, for the settings; nil if none.
+function ns.AuctionAddon()
+    if Auctionator and Auctionator.API and Auctionator.API.v1 then return "Auctionator" end
+    if TSM_API then return "TradeSkillMaster" end
+end
+
+-- True if the tooltip of the recipe in a bag slot says you already know it.
+local function IsKnownRecipe(bag, slot)
+    local known = ITEM_SPELL_KNOWN
+    if not known or not (C_TooltipInfo and C_TooltipInfo.GetBagItem) then return false end
+    local data = C_TooltipInfo.GetBagItem(bag, slot)
+    for _, line in ipairs(data and data.lines or {}) do
+        if line.leftText == known then return true end
+    end
+    return false
 end
 
 local function InEquipmentSet(bag, slot)
@@ -371,6 +506,8 @@ local REASONS = {
     cheap = L["cheap white item"],
     unusable = L["your class can't use it"],
     outgrown = L["you've outgrown it"],
+    lighterArmor = L["lighter armor than you wear"],
+    knownRecipe = L["recipe you already know"],
 }
 ns.REASONS = REASONS
 
@@ -381,8 +518,9 @@ ns.REASONS = REASONS
 local function JunkReason(info, bag, slot, ignoreKeepRules)
     local itemID, quality = info.itemID, info.quality
     local flag = db.items[itemID]
+    if flag == true and not ignoreKeepRules and WorthAuctioning(itemID, info.isBound) then return nil end
     if flag ~= nil then return flag and "flagged" or nil end -- your lists come first
-    if not ignoreKeepRules and KeepRule(itemID) then return nil end
+    if not ignoreKeepRules and KeepRule(itemID, info.isBound) then return nil end
     if InEquipmentSet(bag, slot) then return nil end
     if quality == POOR then return db.sellGreys and "grey" or nil end
     if info.hasNoValue or NEVER_SELL_TOOLS[itemID] then return nil end
@@ -419,6 +557,17 @@ local function JunkReason(info, bag, slot, ignoreKeepRules)
             return "outgrown"
         end
     end
+
+    -- Soulbound armor lighter than you wear, like leather on a warrior. Only
+    -- soulbound: anything else could still go to the auction house. Cloaks
+    -- are cloth for everyone, so they don't count.
+    if isGear and info.isBound and quality and quality <= RARE and db.sellLighterArmor and classID == ARMOR
+        and subClassID >= CLOTH and subClassID <= PLATE and equipLoc ~= "INVTYPE_CLOAK" then
+        local heaviest = HeaviestArmor()
+        if heaviest and subClassID < heaviest then return "lighterArmor" end
+    end
+
+    if classID == RECIPE and db.sellKnownRecipes and IsKnownRecipe(bag, slot) then return "knownRecipe" end
 end
 ns.JunkReason = JunkReason
 
@@ -1519,13 +1668,16 @@ local function AddTooltipLine(tooltip, data)
         local value = price > 0 and GetMoneyString(price * count, true) or L["no value"]
         tooltip:AddDoubleLine(L["Pocket Goblin: sells ("] .. REASONS[reason] .. ")",
             value .. (count > 1 and ("  |cff8a8b93x" .. count .. "|r") or ""), 1, 0.82, 0, 1, 1, 1)
+    elseif flag == true and info and info.itemID == data.id and WorthAuctioning(data.id, info.isBound) then
+        tooltip:AddLine(L["Pocket Goblin: kept ("] .. ns.KeepRuleText("auction") .. ")",
+            LOCK_COLOR[1], LOCK_COLOR[2], LOCK_COLOR[3], true)
     elseif flag == true then
         tooltip:AddLine(L["Pocket Goblin: auto-sell"], 1, 0.82, 0)
     elseif flag == false then
         tooltip:AddLine(L["Pocket Goblin: kept"], LOCK_COLOR[1], LOCK_COLOR[2], LOCK_COLOR[3])
     elseif info and info.itemID == data.id and db.tooltipValue then
         -- Say so when a keep rule is what stops it from being sold.
-        local rule, word = KeepRule(data.id)
+        local rule, word = KeepRule(data.id, info.isBound)
         if rule and JunkReason(info, bag, slot, true) then
             tooltip:AddLine(L["Pocket Goblin: kept ("] .. ns.KeepRuleText(rule, word) .. ")",
                 LOCK_COLOR[1], LOCK_COLOR[2], LOCK_COLOR[3], true)
@@ -1860,6 +2012,51 @@ function ns.CopyProfile(source)
     ProfileChanged()
 end
 
+-- The other profiles with items on one list (flag true: auto-sell, false:
+-- keep): { { name =, count = }, ... }, the most items first.
+function ns.ListSources(flag)
+    local sources = {}
+    for name, profile in pairs(PocketGoblinDB.profiles) do
+        if profile ~= db and profile.items then
+            local count = 0
+            for _, itemFlag in pairs(profile.items) do
+                if itemFlag == flag then count = count + 1 end
+            end
+            if count > 0 then sources[#sources + 1] = { name = name, count = count } end
+        end
+    end
+    table.sort(sources, function(a, b)
+        if a.count ~= b.count then return a.count > b.count end
+        return a.name < b.name
+    end)
+    return sources
+end
+
+-- Adds another profile's auto-sell and keep lists to the active one,
+-- without touching its settings. Items already on one of the active
+-- profile's lists stay as they are.
+function ns.ImportLists(source)
+    local from = PocketGoblinDB.profiles[source]
+    if not from or from == db then return end
+    UpgradeProfile(from) -- the source may not have been loaded since an update
+    local added = 0
+    for itemID, flag in pairs(from.items) do
+        if db.items[itemID] == nil then
+            db.items[itemID] = flag
+            db.addedAt[itemID] = from.addedAt[itemID] or time()
+            added = added + 1
+        end
+    end
+    if added == 0 then
+        Print(L["Nothing to import from %s: every item on its lists is on yours already."], source)
+    elseif added == 1 then
+        Print(L["Imported 1 item from %s."], source)
+    else
+        Print(L["Imported %d items from %s."], added, source)
+    end
+    ProfileChanged()
+end
+
 function ns.ResetProfile()
     wipe(db)
     UpgradeProfile(db)
@@ -1918,6 +2115,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         UpdateBestFood()
         ns.SetupDestroyButtons()
         ns.SetupSortButton()
+        ns.SetupOpenButtons()
         hooksecurefunc("BuybackItem", OnBuyback)
         hooksecurefunc("RepairAllItems", function(guildBank) guildRepairPending = guildBank and true or false end)
         if TooltipDataProcessor and Enum.TooltipDataType then

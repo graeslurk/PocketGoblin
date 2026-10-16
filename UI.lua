@@ -212,6 +212,26 @@ local function SettingToggle(key, onChange)
     end
 end
 
+-- Scrolling a page with the mouse wheel shouldn't get caught by a slider
+-- the pointer happens to pass over: wheel turns on a slider within this
+-- long of scrolling the page keep scrolling the page. Stop for a moment,
+-- and the wheel moves the slider.
+local WHEEL_HANDOFF = 0.5 -- seconds
+local lastPageScroll, scrolledPage = 0, nil
+
+local function PageScrolled(page)
+    lastPageScroll, scrolledPage = GetTime(), page
+end
+
+-- True (after passing the turn on) if the page was just being scrolled.
+local function HandWheelToPage(delta)
+    if scrolledPage and scrolledPage:IsVisible() and GetTime() - lastPageScroll < WHEEL_HANDOFF then
+        scrolledPage:GetScript("OnMouseWheel")(scrolledPage, delta)
+        return true
+    end
+    return false
+end
+
 -- Thin track with a gold fill, a round knob and the value on the right.
 -- get() returns the current value; format may be nil for no value label;
 -- width is the track width.
@@ -261,6 +281,7 @@ local function CreateSlider(parent, minValue, maxValue, step, get, format, onCha
     end)
     slider:EnableMouseWheel(true)
     slider:SetScript("OnMouseWheel", function(self, delta)
+        if HandWheelToPage(delta) then return end
         if self:IsEnabled() then self:SetValue(self:GetValue() + delta * step) end
     end)
     slider:SetValue(get())
@@ -674,6 +695,7 @@ local function CreateScrollArea(parent)
 
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
+        PageScrolled(self)
         scrollTo(self:GetVerticalScroll() - delta * 48)
     end)
     scroll:SetScript("OnScrollRangeChanged", function(self)
@@ -1375,6 +1397,51 @@ local function CreateListCard(page, options)
     empty.body:SetPoint("TOP", empty.title, "BOTTOM", 0, -6)
     empty.body:SetWidth(300)
     empty.body:SetJustifyH("CENTER")
+
+    -- When the list is empty but other profiles have items on it (see
+    -- ShowImportHint): with one, a line saying so and an Import button; with
+    -- several, a dropdown to pick one (the most items first) and a button.
+    empty.hint = Text(empty, 12, C.text)
+    empty.hint:SetPoint("TOP", empty.body, "BOTTOM", 0, -16)
+    empty.hint:SetWidth(300)
+    empty.hint:SetJustifyH("CENTER")
+    empty.import = CreateButton(empty, L["Import lists"], 120)
+    empty.import:SetPoint("TOP", empty.hint, "BOTTOM", 0, -10)
+    empty.import:SetScript("OnClick", function()
+        if empty.choice then ns.ImportLists(empty.choice) end
+    end)
+
+    local chooser = CreateFrame("Frame", nil, empty)
+    chooser:SetSize(156 + 10 + 90, 32)
+    chooser:SetPoint("TOP", empty.hint, "BOTTOM", 0, -10)
+    local function SourceLabel(name)
+        for _, source in ipairs(empty.sources or {}) do
+            if source.name == name then return ("%s (%d)"):format(source.name, source.count) end
+        end
+        return ""
+    end
+    chooser.dropdown = CreateDropdown(chooser, 156,
+        function() return SourceLabel(empty.choice) end,
+        function(root)
+            for _, source in ipairs(empty.sources or {}) do
+                root:CreateRadio(SourceLabel(source.name), function() return empty.choice == source.name end,
+                    function()
+                        empty.choice = source.name
+                        chooser.dropdown:UpdateLabel()
+                    end)
+            end
+        end)
+    chooser.dropdown:SetPoint("LEFT")
+    local chooserImport = CreateButton(chooser, L["Import"], 90)
+    chooserImport:SetPoint("RIGHT")
+    chooserImport:SetScript("OnClick", function()
+        if empty.choice then ns.ImportLists(empty.choice) end
+    end)
+    empty.chooser = chooser
+
+    empty.hint:Hide()
+    empty.import:Hide()
+    chooser:Hide()
     list.empty = empty
 
     return list
@@ -1483,9 +1550,44 @@ local function BuildListPage(page)
     junkText:SetPoint("TOPLEFT", junkLabel, "BOTTOMLEFT", 0, -4)
 end
 
+-- On an empty list: offers to import from the other profiles that have
+-- items on it (flag true: auto-sell, false: keep). show: false hides it.
+local function ShowImportHint(list, flag, show)
+    local empty = list.empty
+    local sources = show and ns.ListSources(flag) or {}
+    empty.sources = sources
+
+    if #sources == 1 then
+        local source = sources[1]
+        local text
+        if flag then
+            text = source.count == 1 and L["Your %s profile has 1 item on its auto-sell list."]
+                or L["Your %s profile has %d items on its auto-sell list."]
+        else
+            text = source.count == 1 and L["Your %s profile has 1 item on its keep list."]
+                or L["Your %s profile has %d items on its keep list."]
+        end
+        empty.hint:SetText(text:format(source.name, source.count))
+        empty.choice = source.name
+    elseif #sources > 1 then
+        empty.hint:SetText(L["Import lists from"])
+        -- Keep the profile picked earlier while it's still offered.
+        local stillOffered = false
+        for _, source in ipairs(sources) do
+            if source.name == empty.choice then stillOffered = true end
+        end
+        if not stillOffered then empty.choice = sources[1].name end
+        empty.chooser.dropdown:UpdateLabel()
+    end
+    empty.hint:SetShown(#sources > 0)
+    empty.import:SetShown(#sources == 1)
+    empty.chooser:SetShown(#sources > 1)
+end
+
 local function RefreshSellList()
     local items = GetFlaggedItems()
     SetListItems(sellList, items)
+    ShowImportHint(sellList, true, #items == 0)
     if #items == 0 then
         sellList.empty.title:SetText(L["Nothing flagged yet"])
         sellList.empty.body:SetText(L["Alt+Right-click an item in your bags, or drag it here."])
@@ -1563,6 +1665,7 @@ end
 local function RefreshKeepList()
     local items = GetKeptItems()
     SetListItems(keepList, items)
+    ShowImportHint(keepList, false, #items == 0)
     if #items == 0 then
         keepList.empty.title:SetText(L["Nothing kept yet"])
         keepList.empty.body:SetText(L["Alt+Right-click an item and choose \"Never sell\", or drag it here."])
@@ -1697,7 +1800,7 @@ local function BuildRulesPage(page)
 
         card, finish = addCard(L["Always keep"])
         AddRow(card, L["Keep list"],
-            L["Items you've chosen to never sell. Alt+Right-click an item and choose \"Never sell\" to add it."],
+            L["Items you never want sold. Alt+Right-click an item and choose \"Never sell\"."],
             function(parent)
                 local open = CreateButton(parent, L["Keep list"], 110)
                 open:SetScript("OnClick", function()
@@ -1706,17 +1809,21 @@ local function BuildRulesPage(page)
                 end)
                 return open
             end)
-        AddRow(card, L["Quest gear"],
-            L["Never sell weapons and armor that quests ask for. They're listed on the Keep list page, "
-                .. "under Quest gear."],
-            SettingToggle("skipQuestGear", ns.OnRulesChanged))
         AddRow(card, L["Names containing"],
-            L["Never sell items whose name contains one of these words, e.g. potion, elixir. Separate them "
-                .. "with commas and press Enter."],
+            L["Items whose name contains one of these words, like potion or elixir. Separate them with commas "
+                .. "and press Enter."],
             function(parent) return CreateWordsInput(parent) end)
-        AddRow(card, L["Item types"], L["Never sell items of these types, whatever the other rules say."],
+        AddRow(card, L["Item types"], L["Item types that are never sold."],
             function(parent) return CreateTypePicker(parent) end)
-        AddRow(card, L["Valuable items"], L["Never sell items worth more than the amount below."],
+        finish()
+
+        card, finish = addCard(L["Kept automatically"])
+        AddRow(card, L["Quest gear"], L["Weapons and armor that quests ask for, listed on the Keep list page."],
+            SettingToggle("skipQuestGear", ns.OnRulesChanged))
+        AddRow(card, L["Upgrades"],
+            L["Gear better than what you wear in its slot, or that would fill an empty one. Never destroyed either."],
+            SettingToggle("protectUpgrades", ns.OnRulesChanged))
+        AddRow(card, L["Valuable items"], L["Items worth more than the amount below."],
             SettingToggle("keepValuable", ns.OnRulesChanged))
         AddDependentRow(card, "keepValuable", L["Worth more than"],
             L["Price per item. Drag, or type an amount like 1g or 50s."],
@@ -1728,9 +1835,23 @@ local function BuildRulesPage(page)
                         ns.OnRulesChanged()
                     end)
             end)
+        AddRow(card, L["Worth more at the auction house"],
+            L["Items worth the times below their vendor price at the auction house, also on your auto-sell "
+                .. "list. Not grey items. Needs Auctionator or TradeSkillMaster."],
+            SettingToggle("keepAuction", ns.OnRulesChanged))
+        AddDependentRow(card, "keepAuction", L["Times the vendor price"],
+            L["How much more they have to be worth there."],
+            function(parent)
+                return CreateSlider(parent, 2, 10, 1, function() return ns.db.auctionFactor end,
+                    function(value) return ("%dx"):format(value + 0.5) end,
+                    function(value)
+                        ns.db.auctionFactor = math.floor(value + 0.5)
+                        ns.OnRulesChanged()
+                    end)
+            end)
         AddRow(card, L["Always protected"],
-            L["Items in an equipment set. And your own lists come first: an item on the auto-sell list "
-                .. "is sold even if a rule here matches it."])
+            L["Items in an equipment set. Items on your auto-sell list still sell, whatever these rules say, "
+                .. "unless they're worth more at the auction house."])
         finish()
 
         card, finish = addCard(L["Grey and white items"])
@@ -1738,12 +1859,12 @@ local function BuildRulesPage(page)
             L["Every grey item is junk, unless you've put it on the keep list."],
             SettingToggle("sellGreys", ns.OnRulesChanged))
         AddRow(card, L["Sell white weapons and armor"],
-            L["From the level below, white gear is junk: by then you've usually found better. Profession "
-                .. "tools, fishing poles, thrown weapons, shirts and tabards are left alone."],
+            L["White weapons and armor from the level below. Profession tools, fishing poles, shirts and tabards "
+                .. "are kept."],
             SettingToggle("sellWhiteGear", ns.OnRulesChanged))
         local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 60
         AddDependentRow(card, "sellWhiteGear", L["From level"],
-            L["Below this level white gear is left alone, since you can still use it."],
+            L["Below this level, white gear is left alone."],
             function(parent)
                 return CreateSlider(parent, 1, math.max(maxLevel, 10), 1, function() return ns.db.whiteGearLevel end,
                     function(value) return ("%d"):format(value + 0.5) end,
@@ -1753,9 +1874,8 @@ local function BuildRulesPage(page)
                     end)
             end)
         AddRow(card, L["Sell cheap white items"],
-            L["Other white items worth less than the amount below, like cheap trade goods. Weapons, armor, "
-                .. "food and drink are left to their own rules; ammo, class reagents and profession tools are "
-                .. "never sold this way."],
+            L["Other white items worth less than the amount below, like cheap trade goods. Never ammo, class "
+                .. "reagents or tools."],
             SettingToggle("sellCheapWhites", ns.OnRulesChanged))
         AddDependentRow(card, "sellCheapWhites", L["Cheaper than"],
             L["Price per item. Drag, or type an amount like 10s or 1s50c."],
@@ -1771,12 +1891,11 @@ local function BuildRulesPage(page)
 
         card, finish = addCard(L["Food and drink"])
         AddRow(card, L["Sell outgrown food and drink"],
-            L["When you carry better food or drink that you can already use, the lower-level kind is sold. "
-                .. "Food and drink are compared separately. Food that gives Well Fed is never sold, and "
-                .. "conjured food and water never count as better, since they vanish when you log out."],
+            L["Lower-level food or drink once you carry a better kind you can use. Buff food and conjured items "
+                .. "don't count."],
             SettingToggle("sellOldFood", ns.OnRulesChanged))
         AddDependentRow(card, "sellOldFood", L["Only with at least"],
-            L["How many of the better kind you need to carry first, so one lucky drop doesn't sell your supply."],
+            L["Carry this many of the better kind first, so one lucky drop doesn't sell your supply."],
             function(parent)
                 return CreateSlider(parent, 1, 20, 1, function() return ns.db.oldFoodMinBetter end,
                     function(value) return ("%d"):format(value + 0.5) end,
@@ -1789,11 +1908,10 @@ local function BuildRulesPage(page)
 
         card, finish = addCard(L["Soulbound gear"])
         AddRow(card, L["Sell gear you can't use or have outgrown"],
-            L["Weapons and armor your class can never equip, like plate on a mage or a wand on a warrior, "
-                .. "and gear whose required level is far below yours. Up to rare quality."],
+            L["Gear your class can never equip, like plate on a mage, or far below your level. Up to rare quality."],
             SettingToggle("sellSoulbound", ns.OnRulesChanged))
         AddDependentRow(card, "sellSoulbound", L["Levels below you"],
-            L["How far below your level gear has to be to count as outgrown."],
+            L["How far below your level counts as outgrown."],
             function(parent)
                 return CreateSlider(parent, 5, 30, 1, function() return ns.db.outgrownLevels end,
                     function(value) return ("%d"):format(value + 0.5) end,
@@ -1802,6 +1920,15 @@ local function BuildRulesPage(page)
                         ns.OnRulesChanged()
                     end)
             end)
+        AddRow(card, L["Sell armor lighter than yours"],
+            L["Soulbound cloth, leather or mail lighter than you can wear, like leather on a warrior. Not cloaks."],
+            SettingToggle("sellLighterArmor", ns.OnRulesChanged))
+        finish()
+
+        card, finish = addCard(L["Recipes"])
+        AddRow(card, L["Sell recipes you already know"],
+            L["Recipes whose tooltip says \"Already known\"."],
+            SettingToggle("sellKnownRecipes", ns.OnRulesChanged))
         finish()
     end)
 end
@@ -1814,12 +1941,10 @@ local function BuildVendorPage(page)
             L["Sell junk as soon as you talk to a vendor. Otherwise use \"Sell junk now\" on the auto-sell list."],
             SettingToggle("autoSell"))
         AddRow(card, L["Sell 12 at a time"],
-            L["The vendor's Buyback tab only holds your last 12 sales. Selling 12 at a time keeps every "
-                .. "sale buyable; press Sell junk again for the next 12."],
+            L["The vendor only buys back your last 12 sales, so selling 12 at a time keeps every sale buyable."],
             SettingToggle("sellBatchLimit"))
         AddRow(card, L["Vendor panel"],
-            L["A small window next to the vendor with a Sell junk button and everything you sold, to buy "
-                .. "back one by one or all at once. It also offers to auto-sell items you keep selling yourself."],
+            L["A window next to the vendor with Sell junk, buyback, and suggestions for items you keep selling."],
             SettingToggle("merchantPanel", ns.UpdateMerchantPanel))
         finish()
 
@@ -1842,10 +1967,9 @@ local function BuildBagsPage(page)
         local card, finish = addCard(L["Bag icons"])
         AddRow(card, L["Coin icon on junk"], L["Show a coin in the corner of items that will be sold."],
             SettingToggle("showIcons", ns.OnRulesChanged))
-        AddRow(card, L["Lock on kept items"], L["Show a lock on items on your keep list. It uses the same "
-                .. "size and corner as the coin (below)."],
+        AddRow(card, L["Lock on kept items"], L["Show a lock on items on your keep list, in the coin's size and corner."],
             SettingToggle("keepIcon", ns.OnRulesChanged))
-        AddRow(card, L["Icon size"], L["Size of the coin and lock in the corner of the item."],
+        AddRow(card, L["Icon size"], L["Size of the coin and lock."],
             function(parent)
                 return CreateSlider(parent, 0.5, 2, 0.1, function() return ns.db.iconScale end,
                     function(value) return ("%d%%"):format(value * 100 + 0.5) end,
@@ -1865,36 +1989,25 @@ local function BuildBagsPage(page)
             end)
         AddRow(card, L["Grey out junk"], L["Fade and desaturate items that will be sold."],
             SettingToggle("greyOut", ns.OnRulesChanged))
-        AddRow(card, L["Sort button"],
-            L["A button on the default bags that stacks and sorts everything in them: hearthstone first, then "
-                .. "consumables, reagents, gear, trade goods and the rest, with junk last. Baganator has its own."],
-            SettingToggle("sortButton", ns.UpdateDestroyButtons)) -- moves both buttons
         AddRow(card, "Baganator",
-            L["Baganator draws its own junk coin using Pocket Goblin's rules. If it doesn't, pick Pocket Goblin "
-                .. "as the junk plugin in Baganator's settings. Place the lock in Baganator's corner settings."])
+            L["Baganator shows its own junk coin with Pocket Goblin's rules. If it doesn't, choose Pocket Goblin "
+                .. "as its junk plugin."])
         finish()
 
-        card, finish = addCard(L["Destroy button"])
+        card, finish = addCard(L["Bag buttons"])
+        AddRow(card, L["Sort button"], L["Stacks and sorts the default bags, junk last. Baganator has its own."],
+            SettingToggle("sortButton", ns.UpdateDestroyButtons)) -- moves both buttons
         AddRow(card, L["Show destroy button"],
-            L["Adds a trash can to your bags that destroys the junk item worth the least. Hover it to "
-                .. "see the item and its value before you click."],
+            L["A trash can that destroys your cheapest junk, the same items Pocket Goblin would sell. Hover it "
+                .. "to see what goes."],
             SettingToggle("destroyButton", ns.UpdateDestroyButtons))
-        AddRow(card, L["Ask before destroying"],
-            L["Show a confirmation with the item and its value before anything is destroyed."],
+        AddRow(card, L["Ask before destroying"], L["Confirm the item and its value first."],
             SettingToggle("destroyConfirm"))
-        AddRow(card, L["What counts as junk"],
-            L["The same items Pocket Goblin would sell. Grey items you've marked to keep are never destroyed."],
-            function(parent)
-                local open = CreateButton(parent, L["Junk rules"], 110)
-                open:SetScript("OnClick", function() SelectPage("rules") end)
-                return open
-            end)
         AddRow(card, L["Protect valuable junk"],
-            L["Never destroy junk worth more than the limit below. For stacks, the value of the whole "
-                .. "stack counts."],
+            L["Never destroy junk worth more than the limit below, counting the whole stack."],
             SettingToggle("destroyProtect", ns.UpdateDestroyButtons))
         dependentRows[#dependentRows + 1] = { AddRow(card, L["Value limit"],
-            L["Junk worth more than this is left alone. Drag, or type an amount in the format of 1s50c."],
+            L["Drag, or type an amount like 1s50c."],
             function(parent)
                 return CreateMoneyInput(parent, LIMITS,
                     function() return ns.db.destroyLimit end,
@@ -1903,15 +2016,20 @@ local function BuildBagsPage(page)
                         ns.UpdateDestroyButtons()
                     end)
             end), "destroyProtect" }
+        AddRow(card, L["Show open button"],
+            L["Opens clams, sacks and other containers, one per click. Also a hotkey."],
+            SettingToggle("openButton", ns.UpdateOpenButtons))
         finish()
 
-        card, finish = addCard(L["Bag space"])
+        card, finish = addCard(L["Full bags"])
+        AddRow(card, L["Make room when looting"],
+            L["A button under the loot window destroys your cheapest junk and loots, in one click."],
+            SettingToggle("lootMakeRoom"))
         AddRow(card, L["Warn when bags are nearly full"],
-            L["The trash can turns red and shows how many slots are free. You also get a chat message, "
-                .. "unless chat messages are off."],
+            L["The trash can turns red and shows the free slots, with a chat message."],
             SettingToggle("bagWarning", ns.UpdateDestroyButtons))
         dependentRows[#dependentRows + 1] = { AddRow(card, L["Free slots"],
-            L["Warn at this many free bag slots or fewer."],
+            L["Warn at this many free slots or fewer."],
             function(parent)
                 return CreateSlider(parent, 1, 10, 1, function() return ns.db.bagWarningSlots end,
                     function(value) return ("%d"):format(value + 0.5) end,
@@ -2271,11 +2389,11 @@ end
 
 -- The Profile and Manage profiles cards, for the General page.
 local function AddProfileCards(addCard)
-    local copySource, deleteTarget
+    local copySource, importSource, deleteTarget
 
     do
         local card, finish = addCard(L["Profile"])
-        AddRow(card, L["Active profile"], L["The settings, auto-sell list and filters this character uses."],
+        AddRow(card, L["Active profile"], L["The settings, auto-sell and keep lists, and filters this character uses."],
             function(parent)
                 return CreateDropdown(parent, 236,
                     function() return ns.GetProfileName() end,
@@ -2333,7 +2451,30 @@ local function AddProfileCards(addCard)
                 end)
                 return DropdownWithButton(parent, dropdown, copy)
             end)
-        AddRow(card, L["Reset profile"], L["Back to default settings, with an empty auto-sell list."],
+        AddRow(card, L["Import lists from"],
+            L["Add another profile's auto-sell and keep lists to yours. Your settings, and items you've already "
+                .. "listed, stay as they are."],
+            function(parent)
+                local dropdown
+                dropdown = CreateDropdown(parent, 156,
+                    function() return ProfileExists(importSource) and importSource or L["Choose profile"] end,
+                    function(root)
+                        for _, name in ipairs(ns.GetProfileNames()) do
+                            if name ~= ns.GetProfileName() then
+                                root:CreateRadio(name, function() return importSource == name end, function()
+                                    importSource = name
+                                    dropdown:UpdateLabel()
+                                end)
+                            end
+                        end
+                    end)
+                local import = CreateButton(parent, L["Import"], 72)
+                import:SetScript("OnClick", function()
+                    if ProfileExists(importSource) then ns.ImportLists(importSource) end
+                end)
+                return DropdownWithButton(parent, dropdown, import)
+            end)
+        AddRow(card, L["Reset profile"], L["Back to default settings, with empty auto-sell and keep lists."],
             function(parent)
                 return CreateConfirmButton(parent, L["Reset"], 100, "danger", ns.ResetProfile)
             end)
@@ -2947,6 +3088,8 @@ local function WelcomeSummary()
         sells[#sells + 1] = L["White items worth less than "] .. GetMoneyString(db.cheapWhiteLimit, true)
     end
     if db.sellSoulbound then sells[#sells + 1] = L["Soulbound gear your class can't use or you've outgrown"] end
+    if db.sellLighterArmor then sells[#sells + 1] = L["Soulbound armor lighter than you wear"] end
+    if db.sellKnownRecipes then sells[#sells + 1] = L["Recipes you already know"] end
     sells[#sells + 1] = L["Anything you put on the auto-sell list"]
 
     if db.autoSell then

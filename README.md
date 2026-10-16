@@ -12,6 +12,8 @@ You decide, with simple rules (all can be turned off):
 - **Food and drink you've outgrown** when you carry enough of something better
 - **Cheap white items** below a price you choose (off by default; never class reagents or profession tools)
 - **Soulbound gear your class can't use, or that you've outgrown** (off by default)
+- **Soulbound armor lighter than you wear**, like leather on a warrior (off by default)
+- **Recipes you already know** (off by default)
 - **Anything on your auto-sell list**
 
 And it never sells:
@@ -19,6 +21,8 @@ And it never sells:
 - Anything on your **keep list**
 - Items whose name contains words you choose, item types you pick, or items worth more than a limit
 - Weapons and armor that quests ask for
+- **Upgrades**: gear better than what you wear in its slot, or that would fill an empty one
+- Items worth clearly more at the **auction house** than at a vendor, when Auctionator or TradeSkillMaster is installed
 - Items in an equipment set
 
 Hover **Preview** on the Junk rules page to see exactly what would be sold right now, and why.
@@ -32,11 +36,13 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 - **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs
 - **Earnings** this session, today, per character and across all characters
 - **Destroy button** in your bags for the cheapest junk, with a confirmation and a value limit
+- **Make room** when your bags are full: a button on the loot window destroys your cheapest junk and loots, in one click
+- **Open containers**: a button in your bags (and a hotkey) opens clams, sacks of loot and other containers, one per click
 - **Sort button** on the default bags: stacks and sorts everything, with junk last
 - **Bag space warning** when your bags are nearly full
 - **Coin and lock icons** on junk and kept items, in the default bags and in Baganator
 - **Auto-repair**, optionally from guild funds
-- **Profiles**, per character
+- **Profiles**, per character, each with its own auto-sell and keep lists. Import another profile's lists into yours without copying its settings
 - A goblin with **moods**, a **voice** and **milestones**, or plain chat messages, or none
 
 ## Commands

@@ -5,6 +5,9 @@
     <Binding name="POCKETGOBLIN_KEEP" category="Pocket Goblin">
         PocketGoblin_KeepHovered()
     </Binding>
+    <Binding name="POCKETGOBLIN_OPEN" category="Pocket Goblin">
+        PocketGoblin_OpenContainer()
+    </Binding>
     <Binding name="POCKETGOBLIN_DESTROY" category="Pocket Goblin">
         PocketGoblin_DestroyCheapestJunk()
     </Binding>

@@ -220,6 +220,7 @@ local function AttachToDefaultBags()
         end
     end
     button.Place = place
+    ns.defaultDestroyButton = button -- the open button sits next to it
 end
 
 -- Baganator: placed next to its own buttons at the top of the backpack.
@@ -426,3 +427,108 @@ function ns.DebugDestroyButtons(print)
             parent and parent:GetFrameLevel() or 0, tostring(point), FrameName(relativeTo)))
     end
 end
+
+------------------------------------------------------------------------
+-- Make room: with full bags, a button under the loot window destroys the
+-- cheapest junk (asking first, like the trash can, unless that's off) and
+-- then loots everything that fits. Deleting needs a click, so it can't
+-- happen by itself.
+------------------------------------------------------------------------
+
+local makeRoom
+local lootAfterDestroy = false -- loot once the junk is gone
+local ITEM_LOOT = Enum.LootSlotType and Enum.LootSlotType.Item or 1
+
+local function HasItemLoot()
+    for slot = 1, GetNumLootItems() do
+        if GetLootSlotType(slot) == ITEM_LOOT then return true end
+    end
+    return false
+end
+
+local function LootAll()
+    for slot = GetNumLootItems(), 1, -1 do LootSlot(slot) end
+end
+
+local function ShowMakeRoomTooltip(self)
+    local target = ns.FindCheapestJunk()
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText(L["Make room"], 1, 1, 1)
+    if target then
+        GameTooltip:AddLine(L["Destroys your cheapest junk, then loots:"], 0.8, 0.8, 0.8, true)
+        GameTooltip:AddDoubleLine(target.link .. (target.count > 1 and ("  x" .. target.count) or ""),
+            target.value > 0 and GetMoneyString(target.value, true) or L["no value"], 1, 1, 1, 1, 1, 1)
+    end
+    GameTooltip:Show()
+end
+
+-- Shown while the loot window is open with item loot, your bags are full
+-- and there's junk to destroy.
+local function UpdateMakeRoom()
+    if not makeRoom then return end
+    local show = ns.db and ns.db.lootMakeRoom and LootFrame:IsShown() and ns.GetFreeBagSlots() == 0
+        and HasItemLoot() and ns.FindCheapestJunk() ~= nil
+    makeRoom:SetShown(show and true or false)
+end
+
+-- A small dark panel in the style of Pocket Goblin's window: a muted gold
+-- border that brightens on hover, and the trash can and "Make room" in gold.
+local function CreateMakeRoom()
+    local UI = ns.UI
+    local C = UI.C
+    makeRoom = CreateFrame("Button", nil, UIParent)
+    makeRoom:SetFrameStrata("DIALOG")
+    makeRoom:SetPoint("TOP", LootFrame, "BOTTOM", 0, -6)
+
+    local bg = UI.Rounded(makeRoom, "BACKGROUND", C.bg)
+    local border = UI.Rounded(makeRoom, "BORDER", C.gold, "rounded-border")
+    local icon = UI.Icon(makeRoom, "icon-trash", 14, C.gold)
+    local label = UI.Text(makeRoom, 13, C.gold)
+    label:SetText(L["Make room"])
+    local width = 14 + 6 + label:GetStringWidth()
+    icon:SetPoint("LEFT", makeRoom, "CENTER", -width / 2, 0)
+    label:SetPoint("LEFT", icon, "RIGHT", 6, 0)
+    makeRoom:SetSize(width + 28, 28)
+
+    local function paint(hovered)
+        UI.SetColor(bg, hovered and C.controlHover or C.bg)
+        border:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], hovered and 1 or 0.45)
+    end
+    paint(false)
+    makeRoom:SetScript("OnEnter", function(self)
+        paint(true)
+        ShowMakeRoomTooltip(self)
+    end)
+    makeRoom:SetScript("OnLeave", function()
+        paint(false)
+        GameTooltip:Hide()
+    end)
+    makeRoom:SetScript("OnMouseDown", function() icon:SetPoint("LEFT", makeRoom, "CENTER", -width / 2 + 1, -1) end)
+    makeRoom:SetScript("OnMouseUp", function() icon:SetPoint("LEFT", makeRoom, "CENTER", -width / 2, 0) end)
+    makeRoom:SetScript("OnClick", function()
+        lootAfterDestroy = true
+        ns.DestroyCheapestJunk()
+    end)
+    makeRoom:Hide()
+end
+
+local lootEvents = CreateFrame("Frame")
+lootEvents:RegisterEvent("LOOT_OPENED")
+lootEvents:RegisterEvent("LOOT_CLOSED")
+lootEvents:RegisterEvent("LOOT_SLOT_CLEARED")
+lootEvents:RegisterEvent("BAG_UPDATE_DELAYED")
+lootEvents:SetScript("OnEvent", function(_, event)
+    if not LootFrame then return end -- no loot window to attach to
+    if event == "LOOT_CLOSED" then
+        lootAfterDestroy = false
+        if makeRoom then makeRoom:Hide() end
+        return
+    end
+    if not makeRoom then CreateMakeRoom() end
+    if event == "BAG_UPDATE_DELAYED" and lootAfterDestroy and LootFrame:IsShown() and ns.GetFreeBagSlots() > 0 then
+        lootAfterDestroy = false
+        LootAll()
+    end
+    -- The game shows the loot window right after LOOT_OPENED, so look a moment later.
+    C_Timer.After(0, UpdateMakeRoom)
+end)

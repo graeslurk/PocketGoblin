@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.0
+
+New:
+- **Import lists from another profile**: on the Profiles card, add another profile's auto-sell and keep lists to yours without changing your settings. Items already on one of your lists stay as they are
+- An **empty auto-sell or keep list** offers to import from your other profiles that have items on that list, showing how many each has
+- **Make room**: when your bags are full, the loot window gets a button that destroys your cheapest junk and loots, in one click. It uses the trash can's junk, confirmation and value limit, and can be turned off on the Bags page
+- New junk rule, **armor lighter than yours**: soulbound cloth, leather and mail lighter than the heaviest armor you can wear, like leather on a warrior. Bind-on-equip pieces are left alone for the auction house (off by default)
+- New junk rule, **recipes you already know** (off by default)
+- **Upgrades are protected**: gear with a higher item level than what you wear in its slot, or that would fill an empty slot, is never sold or destroyed (unless it's on your auto-sell list). Gear your class can't use and armor lighter than yours don't count. On by default
+- **Auction prices**: with Auctionator or TradeSkillMaster installed, items worth at least twice their vendor price at the auction house are kept, also when they're on your auto-sell list, since prices change. Grey items always sell. Choose how much more under Kept automatically
+- **Open containers**: while you carry clams, sacks of loot or other containers, a button next to the trash can opens the next one with each click, with a count. Also a hotkey. Locked boxes are skipped
+
+Changed:
+- **Tidier options**: shorter descriptions throughout. On the Junk rules page, your own keep rules and the ones Pocket Goblin applies by itself (quest gear, upgrades, valuable items, auction prices) are now separate cards. The Bags page is grouped into Bag icons, Bag buttons and Full bags
+- Scrolling the options with the mouse wheel no longer gets caught by a slider the pointer passes over. To change a slider with the wheel, stop for a moment over it first
+- The Profiles card now says that the keep list is part of a profile too, and that resetting a profile empties both lists
+
 ## 1.4.2
 
 New look:

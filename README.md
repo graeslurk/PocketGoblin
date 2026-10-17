@@ -22,7 +22,7 @@ And it never sells:
 - Items whose name contains words you choose, item types you pick, or items worth more than a limit
 - Weapons and armor that quests ask for
 - **Upgrades**: gear better than what you wear in its slot, or that would fill an empty one
-- Items worth clearly more at the **auction house** than at a vendor, when Auctionator or TradeSkillMaster is installed
+- Items that earn at least 10 silver (or an amount you choose) more at the **auction house** than at a vendor, when Auctionator or TradeSkillMaster is installed
 - Items in an equipment set
 
 Hover **Preview** on the Junk rules page to see exactly what would be sold right now, and why.

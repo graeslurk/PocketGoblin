@@ -437,7 +437,9 @@ end
 
 local makeRoom
 local lootAfterDestroy = false -- loot once the junk is gone
+local lootOpen = false -- between LOOT_OPENED and LOOT_CLOSED; the window itself may show a moment later
 local ITEM_LOOT = Enum.LootSlotType and Enum.LootSlotType.Item or 1
+local POOR = Enum.ItemQuality and Enum.ItemQuality.Poor or 0
 
 local function HasItemLoot()
     for slot = 1, GetNumLootItems() do
@@ -446,29 +448,117 @@ local function HasItemLoot()
     return false
 end
 
+-- The item loot, most wanted first: quest items (needed whatever they're
+-- worth), then by value: the higher of vendor and auction house price, or
+-- for grey items, which always sell, the vendor price.
+-- { { slot =, link =, quantity =, value =, auction =, quest = }, ... }
+local function LootByValue()
+    local items = {}
+    for slot = 1, GetNumLootItems() do
+        if GetLootSlotType(slot) == ITEM_LOOT then
+            local _, _, quantity, _, quality, _, isQuestItem = GetLootSlotInfo(slot)
+            local link = GetLootSlotLink(slot)
+            local itemID = link and C_Item.GetItemInfoInstant(link)
+            local value, fromAuction = 0, false
+            if itemID then
+                local vendor = select(11, C_Item.GetItemInfo(itemID)) or 0
+                local auction = quality ~= POOR and ns.AuctionPrice(itemID) or 0
+                fromAuction = auction > vendor
+                value = math.max(vendor, auction) * (quantity or 1)
+            end
+            items[#items + 1] = { slot = slot, link = link, quantity = quantity or 1, value = value,
+                auction = fromAuction, quest = isQuestItem and true or false }
+        end
+    end
+    table.sort(items, function(a, b)
+        if a.quest ~= b.quest then return a.quest end
+        return a.value > b.value
+    end)
+    return items
+end
+
+-- The most wanted item first, so it gets the free slot; the rest, and any
+-- money, follow if they fit.
 local function LootAll()
-    for slot = GetNumLootItems(), 1, -1 do LootSlot(slot) end
+    for _, item in ipairs(LootByValue()) do LootSlot(item.slot) end
+    for slot = GetNumLootItems(), 1, -1 do
+        if GetLootSlotType(slot) ~= ITEM_LOOT then LootSlot(slot) end
+    end
 end
 
 local function ShowMakeRoomTooltip(self)
-    local target = ns.FindCheapestJunk()
+    local target, protected = ns.FindCheapestJunk()
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetText(L["Make room"], 1, 1, 1)
     if target then
-        GameTooltip:AddLine(L["Destroys your cheapest junk, then loots:"], 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine(L["Destroys your cheapest junk:"], 0.8, 0.8, 0.8, true)
         GameTooltip:AddDoubleLine(target.link .. (target.count > 1 and ("  x" .. target.count) or ""),
             target.value > 0 and GetMoneyString(target.value, true) or L["no value"], 1, 1, 1, 1, 1, 1)
+        local best = LootByValue()[1]
+        if best and best.link then
+            GameTooltip:AddLine(L["Then loots the most valuable first:"], 0.8, 0.8, 0.8, true)
+            GameTooltip:AddDoubleLine(best.link .. (best.quantity > 1 and ("  x" .. best.quantity) or ""),
+                best.quest and L["quest item"] or (best.value > 0 and (GetMoneyString(best.value, true)
+                    .. (best.auction and ("  |cff8a8b93" .. L["(auction)"] .. "|r") or "")) or L["no value"]),
+                1, 1, 1, 1, 1, 1)
+        end
+    elseif protected > 0 then
+        GameTooltip:AddLine(L["Your cheapest junk is worth more than your limit for destroying (Bags page)."],
+            1, 0.82, 0, true)
+    else
+        GameTooltip:AddLine(L["No junk left to destroy."], 1, 0.82, 0, true)
     end
     GameTooltip:Show()
 end
 
--- Shown while the loot window is open with item loot, your bags are full
--- and there's junk to destroy.
+-- Why the button is or isn't shown, for /goblin debug.
+local function MakeRoomState()
+    return {
+        setting = ns.db and ns.db.lootMakeRoom or false,
+        lootOpen = lootOpen,
+        freeSlots = ns.GetFreeBagSlots(),
+        itemLoot = lootOpen and HasItemLoot() or false,
+        junk = ns.FindCheapestJunk() ~= nil,
+    }
+end
+
+-- Under the loot window, or above it when the window reaches too close to
+-- the bottom of the screen (a tall one, with many items).
+local function PlaceMakeRoom()
+    makeRoom:ClearAllPoints()
+    local bottom = LootFrame:GetBottom()
+    if issecretvalue and issecretvalue(bottom) then bottom = nil end
+    local room = bottom and bottom * LootFrame:GetEffectiveScale()
+    if room and room < (makeRoom:GetHeight() + 12) * makeRoom:GetEffectiveScale() then
+        makeRoom:SetPoint("BOTTOM", LootFrame, "TOP", 0, 6)
+    else
+        makeRoom:SetPoint("TOP", LootFrame, "BOTTOM", 0, -6)
+    end
+end
+
+-- Shown while the loot window is open with item loot and your bags are
+-- full; greyed out, with the reason in its tooltip, when there's no junk it
+-- may destroy.
 local function UpdateMakeRoom()
     if not makeRoom then return end
-    local show = ns.db and ns.db.lootMakeRoom and LootFrame:IsShown() and ns.GetFreeBagSlots() == 0
-        and HasItemLoot() and ns.FindCheapestJunk() ~= nil
+    local state = MakeRoomState()
+    local show = state.setting and state.lootOpen and state.freeSlots == 0 and state.itemLoot
+    if show then
+        PlaceMakeRoom()
+        makeRoom:SetEnabled(state.junk)
+        makeRoom.Paint(makeRoom:IsMouseOver())
+        if GameTooltip:IsOwned(makeRoom) then ShowMakeRoomTooltip(makeRoom) end
+    end
     makeRoom:SetShown(show and true or false)
+end
+
+-- A line for /goblin debug.
+function ns.DebugMakeRoom(add)
+    local state = MakeRoomState()
+    add("Make room: setting %s, loot open %s, free slots %d, item loot %s, junk %s, shown %s, loot window %s",
+        tostring(state.setting), tostring(state.lootOpen), state.freeSlots, tostring(state.itemLoot),
+        tostring(state.junk), tostring(makeRoom and makeRoom:IsShown() or false),
+        LootFrame and (LootFrame:IsShown() and "shown" or "hidden") or "missing")
 end
 
 -- A small dark panel in the style of Pocket Goblin's window: a muted gold
@@ -478,7 +568,7 @@ local function CreateMakeRoom()
     local C = UI.C
     makeRoom = CreateFrame("Button", nil, UIParent)
     makeRoom:SetFrameStrata("DIALOG")
-    makeRoom:SetPoint("TOP", LootFrame, "BOTTOM", 0, -6)
+    makeRoom:SetClampedToScreen(true)
 
     local bg = UI.Rounded(makeRoom, "BACKGROUND", C.bg)
     local border = UI.Rounded(makeRoom, "BORDER", C.gold, "rounded-border")
@@ -490,11 +580,18 @@ local function CreateMakeRoom()
     label:SetPoint("LEFT", icon, "RIGHT", 6, 0)
     makeRoom:SetSize(width + 28, 28)
 
+    -- Gold; muted when there's no junk it may destroy.
     local function paint(hovered)
-        UI.SetColor(bg, hovered and C.controlHover or C.bg)
-        border:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], hovered and 1 or 0.45)
+        local enabled = makeRoom:IsEnabled()
+        local color = enabled and C.gold or C.muted
+        UI.SetColor(bg, hovered and enabled and C.controlHover or C.bg)
+        border:SetVertexColor(color[1], color[2], color[3], hovered and enabled and 1 or 0.45)
+        UI.SetColor(icon, color)
+        label:SetTextColor(color[1], color[2], color[3])
     end
+    makeRoom.Paint = paint
     paint(false)
+    makeRoom:SetMotionScriptsWhileDisabled(true) -- the tooltip says why it's greyed out
     makeRoom:SetScript("OnEnter", function(self)
         paint(true)
         ShowMakeRoomTooltip(self)
@@ -517,18 +614,23 @@ lootEvents:RegisterEvent("LOOT_OPENED")
 lootEvents:RegisterEvent("LOOT_CLOSED")
 lootEvents:RegisterEvent("LOOT_SLOT_CLEARED")
 lootEvents:RegisterEvent("BAG_UPDATE_DELAYED")
+lootEvents:RegisterEvent("UI_ERROR_MESSAGE") -- "Inventory is full" when an item doesn't fit
 lootEvents:SetScript("OnEvent", function(_, event)
     if not LootFrame then return end -- no loot window to attach to
     if event == "LOOT_CLOSED" then
-        lootAfterDestroy = false
+        lootOpen, lootAfterDestroy = false, false
         if makeRoom then makeRoom:Hide() end
         return
     end
+    if event == "LOOT_OPENED" then lootOpen = true end
+    if not lootOpen then return end
     if not makeRoom then CreateMakeRoom() end
-    if event == "BAG_UPDATE_DELAYED" and lootAfterDestroy and LootFrame:IsShown() and ns.GetFreeBagSlots() > 0 then
+    if event == "BAG_UPDATE_DELAYED" and lootAfterDestroy and ns.GetFreeBagSlots() > 0 then
         lootAfterDestroy = false
         LootAll()
     end
-    -- The game shows the loot window right after LOOT_OPENED, so look a moment later.
+    -- The loot window shows, and auto loot takes what fits, just after the
+    -- event, so look again a moment later too.
     C_Timer.After(0, UpdateMakeRoom)
+    if event == "LOOT_OPENED" then C_Timer.After(0.3, UpdateMakeRoom) end
 end)

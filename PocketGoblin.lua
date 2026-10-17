@@ -110,8 +110,8 @@ local defaults = {
     keepValuable = false, -- never sell items worth more than keepValueLimit...
     keepValueLimit = 10000, -- ...copper per item (1 gold)
     protectUpgrades = true, -- never sell gear better than what you wear in its slot
-    keepAuction = true,  -- with an auction addon, never sell items worth auctionFactor times more there...
-    auctionFactor = 2,   -- ...than at a vendor
+    keepAuction = true,  -- with an auction addon, never sell items that earn at least...
+    auctionProfit = 1000, -- ...this much copper more there than at a vendor (10 silver), after the house's cut
     keepIcon = true,  -- lock icon on items on the keep list
     addedAt = {},     -- [itemID] = time() it was added to the auto-sell list
     manualSales = {},  -- [itemID] = times you sold it yourself (for auto-sell suggestions)
@@ -202,19 +202,27 @@ local function RefreshWindow()
 end
 
 local IsUpgrade, AuctionPrice -- further down, with the class gear and the auction addons
+local AUCTION_CUT = 0.05 -- the auction house keeps 5% of the sale
 
--- True if an item is worth enough more at the auction house to keep it
--- (with Auctionator or TradeSkillMaster). Never grey items, which always
--- sell, nor soulbound or bind-on-pickup ones, which can't be auctioned.
--- Also checked for items on the auto-sell list: prices change.
+-- True if an item earns enough more at the auction house to keep it (with
+-- Auctionator or TradeSkillMaster): its auction price, after the house's
+-- cut, beats the vendor price by at least auctionProfit. So an empty vial,
+-- 1c at a vendor and 17c at auction, still sells. Never grey items, which
+-- always sell, nor soulbound or bind-on-pickup ones, which can't be
+-- auctioned. Also checked for items on the auto-sell list: prices change.
 local function WorthAuctioning(itemID, bound)
     if not db.keepAuction or bound then return false end
     local _, _, quality, _, _, _, _, _, _, _, price, _, _, bindType = C_Item.GetItemInfo(itemID)
     if not quality or quality == POOR or bindType == 1 then return false end
     local auction = AuctionPrice(itemID)
-    return auction ~= nil and price ~= nil and auction >= math.max(1, price) * db.auctionFactor
+    return auction ~= nil and price ~= nil and auction * (1 - AUCTION_CUT) - price >= db.auctionProfit
 end
 ns.WorthAuctioning = WorthAuctioning
+
+-- For Make room, which loots the most valuable item first.
+function ns.AuctionPrice(itemID)
+    return AuctionPrice(itemID)
+end
 
 -- Which keep rule protects an item: "name" (plus the matching word),
 -- "type", "valuable", "upgrade" or "auction"; nil if none does. bound: the
@@ -826,6 +834,7 @@ local function Debug(toChat)
         #containerFrames, shown, buttons, mapped, flagged)
 
     ns.DebugDestroyButtons(add)
+    if ns.DebugMakeRoom then ns.DebugMakeRoom(add) end
     if ns.DebugSortButton then ns.DebugSortButton(add) else add("Sort button: BagSort.lua not loaded") end
     add("Outgrown food: %s. Best food you carry enough of: level %s. Best drink: level %s.",
         db.sellOldFood and "on" or "off", tostring(bestFood.food or "none"), tostring(bestFood.drink or "none"))
@@ -881,6 +890,9 @@ local function SetFlag(itemID, value, message)
     local label = ItemLabel(itemID)
     if message then
         Notify(message, label)
+    elseif value == true and WorthAuctioning(itemID) then
+        Notify(L["%s added to the auto-sell list, but kept for now: it's worth more at the auction house "
+            .. "(Junk rules, Kept automatically)."], label)
     elseif value == true then
         Notify(L["%s added to the auto-sell list."], label)
     elseif value == false then
@@ -1918,6 +1930,8 @@ end
 -- Brings a profile's settings up to date: renamed and merged settings, then
 -- defaults for anything missing.
 local function UpgradeProfile(profile)
+    -- The auction rule's multiplier and minimum became one profit amount.
+    profile.auctionFactor, profile.auctionMinimum = nil, nil
     -- White-gear auto-flagging became the white-gear rule.
     if profile.autoFlagGear ~= nil then
         profile.sellWhiteGear, profile.autoFlagGear = profile.autoFlagGear, nil

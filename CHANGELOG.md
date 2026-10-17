@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.1
+
+Changed:
+- **Make room** loots the most valuable item first: quest items, then the item worth most, at a vendor or (with Auctionator or TradeSkillMaster) at the auction house. Its tooltip shows both the junk it destroys and the item that gets the slot
+- With your bags still full and no junk left that it may destroy, the Make room button stays greyed out instead of disappearing, and its tooltip says why
+- **Auction prices** now go by profit: an item is kept when it earns at least a set amount more at the auction house than at a vendor, after the auction house's 5% cut. 10 silver by default (Junk rules, Kept automatically). This replaces the multiplier, so cheap things like an empty vial, worth 1c at a vendor and 17c at auction, sell again
+- Putting an item on the auto-sell list that the auction rule keeps now says so in chat
+- In the Make room tooltip and its choice of what to loot first, grey items count at their vendor price, and prices from the auction house are marked "(auction)"
+
+Fixed:
+- The **Make room** button now also shows up when the loot window holds several items. It moves above the loot window when there's no room below it, and `/goblin debug` says why it's shown or not
+
 ## 1.5.0
 
 New:

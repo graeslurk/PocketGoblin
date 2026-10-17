@@ -1836,16 +1836,17 @@ local function BuildRulesPage(page)
                     end)
             end)
         AddRow(card, L["Worth more at the auction house"],
-            L["Items worth the times below their vendor price at the auction house, also on your auto-sell "
-                .. "list. Not grey items. Needs Auctionator or TradeSkillMaster."],
+            L["Items that earn more at the auction house than at a vendor, also on your auto-sell list. Not "
+                .. "grey items. Needs Auctionator or TradeSkillMaster."],
             SettingToggle("keepAuction", ns.OnRulesChanged))
-        AddDependentRow(card, "keepAuction", L["Times the vendor price"],
-            L["How much more they have to be worth there."],
+        AddDependentRow(card, "keepAuction", L["Extra profit"],
+            L["How much more an item has to earn there, after the auction house's 5% cut. Drag, or type an "
+                .. "amount like 10s."],
             function(parent)
-                return CreateSlider(parent, 2, 10, 1, function() return ns.db.auctionFactor end,
-                    function(value) return ("%dx"):format(value + 0.5) end,
-                    function(value)
-                        ns.db.auctionFactor = math.floor(value + 0.5)
+                return CreateMoneyInput(parent, VALUABLE_LIMITS,
+                    function() return ns.db.auctionProfit end,
+                    function(copper)
+                        ns.db.auctionProfit = copper
                         ns.OnRulesChanged()
                     end)
             end)

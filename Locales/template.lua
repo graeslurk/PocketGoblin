@@ -143,6 +143,7 @@ ns.AddTranslations("xxXX", {
     ["Chucked %s. That's %s we'll never see again."] = "",
     ["Cleared out %d items for %s. Your bags can breathe again."] = "",
     ["Click to destroy it. This can't be undone."] = "",
+    ["Close the vendor, bank, trade, mail or auction window first: it would take the container instead of opening it."] = "",
     ["Coin icon on junk"] = "",
     ["Common"] = "",
     ["Confirm the item and its value first."] = "",

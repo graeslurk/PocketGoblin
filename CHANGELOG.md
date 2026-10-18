@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.2
+
+Fixed:
+- The **Open** button no longer sells or hands over a container when a vendor, bank, guild bank, trade, mail or auction window is open: it asks you to close that first
+- Cancelling the destroy confirmation after clicking **Make room** no longer loots everything later on its own
+- The chat note about items kept for their auction price now knows when your copy is soulbound (and so sells)
+
+Changed:
+- Faster junk checks: the keep rules (upgrades, auction prices and the rest) now only run for items a junk rule would sell, instead of for everything in your bags
+
 ## 1.5.1
 
 Changed:

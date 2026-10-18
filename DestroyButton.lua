@@ -326,12 +326,20 @@ local function CreatePopup()
         -- hardware event, and a click on a frame that's already hidden
         -- doesn't count.
         ns.DestroyItem(popup.target)
+        popup.destroyed = true
         popup:Hide()
     end)
 
     local cancel = UI.CreateButton(popup, L["Cancel"], 96)
     cancel:SetPoint("RIGHT", destroy, "LEFT", -8, 0)
     cancel:SetScript("OnClick", function() popup:Hide() end)
+
+    -- Closed without destroying (Cancel, Escape...): Make room stops waiting
+    -- to loot.
+    popup:SetScript("OnHide", function(self)
+        if not self.destroyed and ns.OnDestroyCancelled then ns.OnDestroyCancelled() end
+        self.destroyed = false
+    end)
 
     -- Escape cancels without also closing other windows (see UI.lua).
     popup:EnableKeyboard(true)
@@ -437,6 +445,10 @@ end
 
 local makeRoom
 local lootAfterDestroy = false -- loot once the junk is gone
+
+function ns.OnDestroyCancelled()
+    lootAfterDestroy = false
+end
 local lootOpen = false -- between LOOT_OPENED and LOOT_CLOSED; the window itself may show a moment later
 local ITEM_LOOT = Enum.LootSlotType and Enum.LootSlotType.Item or 1
 local POOR = Enum.ItemQuality and Enum.ItemQuality.Poor or 0

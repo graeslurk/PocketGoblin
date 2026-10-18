@@ -36,10 +36,30 @@ function ns.FindContainers()
     return found
 end
 
+-- With these windows open, using an item from the bags doesn't open it: a
+-- vendor buys it, and the bank, guild bank, trade, mail and auction house
+-- take it.
+local ITEM_TAKING_FRAMES = { "BankFrame", "GuildBankFrame", "TradeFrame", "SendMailFrame", "AuctionFrame",
+    "AuctionHouseFrame" }
+
+local function WindowWouldTakeItem()
+    if ns.IsMerchantOpen() then return true end
+    for _, name in ipairs(ITEM_TAKING_FRAMES) do
+        local frame = _G[name]
+        if frame and frame:IsVisible() then return true end
+    end
+    return false
+end
+
 -- Opens the next container. Must run from a click or key press.
 function ns.OpenNextContainer()
     if InCombatLockdown() then
         ns.Print(L["You can't open containers in combat."])
+        return
+    end
+    if WindowWouldTakeItem() then
+        ns.Print(L["Close the vendor, bank, trade, mail or auction window first: it would take the container "
+            .. "instead of opening it."])
         return
     end
     if CursorHasItem() then
@@ -125,7 +145,8 @@ end
 -- Count and place, after the bags or the setting change.
 function ns.UpdateOpenButtons()
     if not button then return end
-    local count = #ns.FindContainers()
+    -- Switched off: no need to search the bags.
+    local count = ns.db.openButton and #ns.FindContainers() or 0
     Place(count)
     button.count:SetText(count > 1 and count or "")
     if baganatorButton then

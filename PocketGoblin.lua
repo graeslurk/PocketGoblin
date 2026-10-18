@@ -519,17 +519,12 @@ local REASONS = {
 }
 ns.REASONS = REASONS
 
--- Why the item in a bag slot will be sold ("flagged", "grey", "cheap",
--- "unusable" or "outgrown"), or nil if it won't. info is the slot's
--- C_Container.GetContainerItemInfo. ignoreKeepRules answers "would it be
--- sold if no keep rule protected it?".
-local function JunkReason(info, bag, slot, ignoreKeepRules)
+-- Which junk rule would sell the item in a bag slot ("grey", "whiteGear",
+-- "oldFood", "cheap", "unusable", "outgrown", "lighterArmor" or
+-- "knownRecipe"), before your lists and keep rules have their say (see
+-- JunkReason). info is the slot's C_Container.GetContainerItemInfo.
+local function RuleReason(info, bag, slot)
     local itemID, quality = info.itemID, info.quality
-    local flag = db.items[itemID]
-    if flag == true and not ignoreKeepRules and WorthAuctioning(itemID, info.isBound) then return nil end
-    if flag ~= nil then return flag and "flagged" or nil end -- your lists come first
-    if not ignoreKeepRules and KeepRule(itemID, info.isBound) then return nil end
-    if InEquipmentSet(bag, slot) then return nil end
     if quality == POOR then return db.sellGreys and "grey" or nil end
     if info.hasNoValue or NEVER_SELL_TOOLS[itemID] then return nil end
     if db.skipQuestGear and ns.QUEST_GEAR[itemID] then return nil end
@@ -576,6 +571,25 @@ local function JunkReason(info, bag, slot, ignoreKeepRules)
     end
 
     if classID == RECIPE and db.sellKnownRecipes and IsKnownRecipe(bag, slot) then return "knownRecipe" end
+end
+
+-- Why the item in a bag slot will be sold, or nil if it won't: your lists
+-- first (an auto-sell item worth more at the auction house waits), then
+-- equipment sets, then the junk rules. The keep rules come last and only
+-- for items a rule would sell: they're the slower checks (equipped item
+-- levels, auction prices), and most items in the bags aren't junk.
+-- ignoreKeepRules answers "would it be sold if no keep rule protected it?".
+local function JunkReason(info, bag, slot, ignoreKeepRules)
+    local itemID = info.itemID
+    local flag = db.items[itemID]
+    if flag ~= nil then
+        if flag and not ignoreKeepRules and WorthAuctioning(itemID, info.isBound) then return nil end
+        return flag and "flagged" or nil
+    end
+    if InEquipmentSet(bag, slot) then return nil end
+    local reason = RuleReason(info, bag, slot)
+    if reason and not ignoreKeepRules and KeepRule(itemID, info.isBound) then return nil end
+    return reason
 end
 ns.JunkReason = JunkReason
 
@@ -884,13 +898,24 @@ end
 
 -- value: true = auto-sell list, false = keep list, nil = neither (the junk
 -- rules decide). message optionally replaces the chat message.
+-- Whether your copy of an item (the first in your bags) is soulbound; nil
+-- if you carry none.
+local function BoundInBags(itemID)
+    for bag = 0, LAST_BAG do
+        for slot = 1, C_Container.GetContainerNumSlots(bag) do
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            if info and info.itemID == itemID then return info.isBound end
+        end
+    end
+end
+
 local function SetFlag(itemID, value, message)
     db.items[itemID] = value
     db.addedAt[itemID] = value ~= nil and time() or nil
     local label = ItemLabel(itemID)
     if message then
         Notify(message, label)
-    elseif value == true and WorthAuctioning(itemID) then
+    elseif value == true and WorthAuctioning(itemID, BoundInBags(itemID)) then
         Notify(L["%s added to the auto-sell list, but kept for now: it's worth more at the auction house "
             .. "(Junk rules, Kept automatically)."], label)
     elseif value == true then

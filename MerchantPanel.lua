@@ -1,5 +1,5 @@
--- Pocket Goblin's panel next to the vendor window: a "Sell junk" button
--- with what it would sell, an auto-sell suggestion for items you keep
+-- Pocket Goblin's panel next to the vendor window: a warning when another
+-- addon also sells junk, a "Sell junk" button with what it would sell, an auto-sell suggestion for items you keep
 -- selling yourself, what you can buy back (a button each, or all at once),
 -- and what this visit earned.
 
@@ -8,6 +8,7 @@ local L = ns.L
 
 local WIDTH = 270
 local HEADER_HEIGHT = 44
+local WARNING_HEIGHT = 36  -- "also selling your junk" warning, when another addon does
 local SELL_HEIGHT = 56     -- junk summary and the Sell junk button
 local SUGGEST_HEIGHT = 104 -- "auto-sell this?" suggestion, when there is one
 local SECTION_HEIGHT = 30  -- "BUY BACK" heading and the Buy back all button
@@ -17,6 +18,7 @@ local MAX_ROWS = 12 -- the vendor's buyback list holds 12 items
 
 local panel
 local rows = {}
+local WARNING_COLOR = { 1, 0.6, 0.25, 1 }
 local dismissed = false -- closed with the X for this vendor visit
 
 local function QualityColor(quality)
@@ -120,24 +122,62 @@ local function CreatePanel()
     line:SetPoint("TOPLEFT", 1, -HEADER_HEIGHT + 6)
     line:SetPoint("TOPRIGHT", -1, -HEADER_HEIGHT + 6)
 
+    -- Warning: another addon sells junk here too. Hovering it explains.
+    local warning = CreateFrame("Frame", nil, panel)
+    warning:SetPoint("TOPLEFT", 8, -HEADER_HEIGHT - 2)
+    warning:SetPoint("TOPRIGHT", -8, -HEADER_HEIGHT - 2)
+    warning:SetHeight(WARNING_HEIGHT - 8)
+    warning:EnableMouse(true)
+    local tint = UI.Rounded(warning, "BACKGROUND", { WARNING_COLOR[1], WARNING_COLOR[2], WARNING_COLOR[3], 0.12 })
+    local warningIcon = UI.Icon(warning, "icon-info", 14, WARNING_COLOR)
+    warningIcon:SetPoint("LEFT", 8, 0)
+    warning.text = UI.Text(warning, 12, WARNING_COLOR)
+    warning.text:SetPoint("LEFT", warningIcon, "RIGHT", 6, 0)
+    warning.text:SetPoint("RIGHT", -8, 0)
+    warning.text:SetWordWrap(false)
+    warning:SetScript("OnEnter", function(self)
+        UI.SetColor(tint, { WARNING_COLOR[1], WARNING_COLOR[2], WARNING_COLOR[3], 0.2 })
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(L["Another addon sells your junk"], 1, 1, 1)
+        GameTooltip:AddLine(ns.OTHER_SELLERS_PROBLEM, nil, nil, nil, true)
+        GameTooltip:AddLine(" ")
+        for _, seller in ipairs(self.sellers) do
+            if seller.option then
+                GameTooltip:AddDoubleLine(seller.name, ("\"%s\""):format(seller.option),
+                    WARNING_COLOR[1], WARNING_COLOR[2], WARNING_COLOR[3], 1, 1, 1)
+            else
+                GameTooltip:AddLine(seller.name, WARNING_COLOR[1], WARNING_COLOR[2], WARNING_COLOR[3])
+            end
+        end
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine(ns.OtherSellersAdvice(#self.sellers), 0.7, 0.7, 0.7, true)
+        GameTooltip:Show()
+    end)
+    warning:SetScript("OnLeave", function()
+        UI.SetColor(tint, { WARNING_COLOR[1], WARNING_COLOR[2], WARNING_COLOR[3], 0.12 })
+        GameTooltip_Hide()
+    end)
+    panel.warning = warning
+
     -- Sell: what would be sold, and a button to sell it now.
-    local junkLabel = UI.Text(panel, 11, C.muted)
-    junkLabel:SetPoint("TOPLEFT", 14, -HEADER_HEIGHT - 8)
+    local sellArea = CreateFrame("Frame", nil, panel)
+    sellArea:SetHeight(SELL_HEIGHT)
+    panel.sellArea = sellArea
+    local junkLabel = UI.Text(sellArea, 11, C.muted)
+    junkLabel:SetPoint("TOPLEFT", 14, -8)
     junkLabel:SetText(L["JUNK IN YOUR BAGS"])
-    panel.junkText = UI.Text(panel, 13, C.text)
+    panel.junkText = UI.Text(sellArea, 13, C.text)
     panel.junkText:SetPoint("TOPLEFT", junkLabel, "BOTTOMLEFT", 0, -4)
     panel.junkText:SetWidth(WIDTH - 14 - 110)
     panel.junkText:SetWordWrap(false)
 
-    panel.sell = UI.CreateButton(panel, L["Sell junk"], 96, true)
+    panel.sell = UI.CreateButton(sellArea, L["Sell junk"], 96, true)
     panel.sell:SetHeight(28)
-    panel.sell:SetPoint("TOPRIGHT", -12, -HEADER_HEIGHT - 10)
+    panel.sell:SetPoint("TOPRIGHT", -12, -10)
     panel.sell:SetScript("OnClick", function() ns.SellJunk(true) end)
 
     -- Suggestion: an item you keep selling yourself, with yes and no buttons.
     local suggest = CreateFrame("Frame", nil, panel)
-    suggest:SetPoint("TOPLEFT", 0, -HEADER_HEIGHT - SELL_HEIGHT)
-    suggest:SetPoint("TOPRIGHT", 0, -HEADER_HEIGHT - SELL_HEIGHT)
     suggest:SetHeight(SUGGEST_HEIGHT)
     local suggestLine = suggest:CreateTexture(nil, "ARTWORK")
     suggestLine:SetColorTexture(1, 1, 1, 0.06)
@@ -253,11 +293,28 @@ function ns.UpdateMerchantPanel()
         and ("%d %s  |cff8a8b93-|r  %s"):format(count, count == 1 and "item" or "items", GetMoneyString(money, true))
         or L["Nothing to sell"])
 
+    -- The warning, if another addon sells junk too, sits above selling.
+    local y = HEADER_HEIGHT
+    local sellers = ns.ConflictingSellers()
+    local warning = panel.warning
+    warning:SetShown(#sellers > 0)
+    if #sellers > 0 then
+        warning.sellers = sellers
+        warning.text:SetText(#sellers == 1
+            and (L["%s is also selling your junk"]):format(sellers[1].name)
+            or (L["%d other addons are also selling your junk"]):format(#sellers))
+        y = y + WARNING_HEIGHT
+    end
+    panel.sellArea:SetPoint("TOPLEFT", 0, -y)
+    panel.sellArea:SetPoint("TOPRIGHT", 0, -y)
+    y = y + SELL_HEIGHT
+
     -- The suggestion, if there is one, sits between selling and buying back.
-    local y = HEADER_HEIGHT + SELL_HEIGHT
     local suggestID, suggestCount = ns.GetSuggestion()
     local suggest = panel.suggest
     suggest:SetShown(suggestID ~= nil)
+    suggest:SetPoint("TOPLEFT", 0, -y)
+    suggest:SetPoint("TOPRIGHT", 0, -y)
     if suggestID then
         local name, _, quality, _, _, _, _, _, _, icon = C_Item.GetItemInfo(suggestID)
         local color = QualityColor(quality)

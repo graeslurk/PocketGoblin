@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.0
+
+New:
+- **Warning about other junk sellers**: if another addon also sells junk when a vendor opens (Naowh Forever, Enhance QoL, Leatrix Plus, ElvUI, Scrap, Peddler and others), the vendor panel shows a warning at the top for as long as both are selling. Hover it to see which addons and the option to turn off in them. While another addon sells junk too, it can sell items on your keep list, and its sales don't show in your history (some not even in the buyback tab). For Naowh Forever, Enhance QoL, Leatrix Plus and ElvUI it only warns when their selling is actually turned on. With the vendor panel off, it's said in chat instead. Turn the warning off on the Vendor page
+
 ## 1.5.2
 
 Fixed:

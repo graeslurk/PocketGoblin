@@ -42,6 +42,7 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 - **Bag space warning** when your bags are nearly full
 - **Coin and lock icons** on junk and kept items, in the default bags and in Baganator
 - **Auto-repair**, optionally from guild funds
+- **Warns** when another addon (Naowh Forever, Leatrix Plus, Scrap and others) also sells junk at vendors, since two sellers can sell what you meant to keep
 - **Profiles**, per character, each with its own auto-sell and keep lists. Import another profile's lists into yours without copying its settings
 - A goblin with **moods**, a **voice** and **milestones**, or plain chat messages, or none
 

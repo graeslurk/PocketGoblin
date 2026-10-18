@@ -69,6 +69,7 @@ local BAG_ADDONS = { "Baganator", "Bagnon", "AdiBags", "ArkInventory", "BetterBa
 
 local defaults = {
     autoSell = true,  -- sell automatically when a vendor window opens
+    warnOtherSellers = true, -- say so when another addon also sells junk at vendors
     sellBatchLimit = true, -- sell at most BUYBACK_SIZE items per go, so all of them can be bought back
     sellGreys = true, -- include all grey (poor) items
     sellWhiteGear = true, -- sell white weapons and armor...
@@ -830,6 +831,9 @@ local function Debug(toChat)
         if C_AddOns and C_AddOns.IsAddOnLoaded(name) then loaded[#loaded + 1] = name end
     end
     add("Bag addons loaded: %s", #loaded > 0 and table.concat(loaded, ", ") or "none")
+    local sellers = ns.OtherJunkSellers()
+    for i, seller in ipairs(sellers) do sellers[i] = seller.name end
+    add("Other addons selling junk: %s", #sellers > 0 and table.concat(sellers, ", ") or "none")
 
     local shown, buttons, mapped, flagged = 0, 0, 0, 0
     for _, frame in ipairs(containerFrames) do
@@ -2118,6 +2122,97 @@ end
 ns.DEFAULT_PROFILE = DEFAULT_PROFILE
 
 ------------------------------------------------------------------------
+-- Other addons that sell junk
+------------------------------------------------------------------------
+
+-- With two addons selling at the same vendor, the other one can sell what's on
+-- the keep list, and its sales are missing from the history (some don't even
+-- reach the buyback tab). For addons with a switch for it, on() reads that
+-- switch and option names it; the rest count as selling whenever they're loaded.
+local OTHER_SELLERS = {
+    { addon = "NaowhForever_QoL", name = "Naowh Forever", option = "Auto Sell Junk", on = function()
+        local settings = NaowhForever.QoLSettings
+        return settings.Get("enabled") and settings.Get("sellJunk")
+    end },
+    { addon = "EnhanceQoLVendor", name = "Enhance QoL", option = "Automatically sell all junk items", on = function()
+        local settings = EnhanceQoL.db
+        if settings.sellAllJunk then return true end
+        for _, quality in ipairs({ "Poor", "Common", "Uncommon", "Rare", "Epic" }) do
+            if settings["vendor" .. quality .. "Enable"] then return true end
+        end
+        return false
+    end },
+    { addon = "Leatrix_Plus", name = "Leatrix Plus", option = "Sell junk automatically", on = function()
+        return LeaPlusDB.AutoSellJunk == "On"
+    end },
+    { addon = "ElvUI", name = "ElvUI", on = function() return ElvUI[1].db.general.vendorGrays end },
+    { addon = "Scrap", name = "Scrap" },
+    { addon = "Dejunk", name = "Dejunk" },
+    { addon = "Peddler", name = "Peddler" },
+    { addon = "AutoVendor", name = "AutoVendor" },
+    { addon = "Vendor", name = "Vendor" },
+    { addon = "SellJunk", name = "SellJunk" },
+}
+
+-- The loaded addons that will sell junk at the next vendor, as OTHER_SELLERS entries.
+function ns.OtherJunkSellers()
+    local found = {}
+    if not (C_AddOns and C_AddOns.IsAddOnLoaded) then return found end
+    for _, seller in ipairs(OTHER_SELLERS) do
+        if C_AddOns.IsAddOnLoaded(seller.addon) then
+            local selling = true
+            if seller.on then
+                -- If the addon has moved its settings, warn rather than stay quiet.
+                local ok, on = pcall(seller.on)
+                selling = not ok or on and true or false
+            end
+            if selling then found[#found + 1] = seller end
+        end
+    end
+    return found
+end
+
+-- The other sellers worth a warning: none while Pocket Goblin doesn't sell on
+-- its own or the warning is turned off.
+function ns.ConflictingSellers()
+    if not (db.autoSell and db.warnOtherSellers) then return {} end
+    return ns.OtherJunkSellers()
+end
+
+ns.OTHER_SELLERS_PROBLEM = L["While another addon sells junk too, Pocket Goblin can't keep your keep list safe, and some sales won't show in your history or the buyback tab."]
+
+-- What to do about it: turn off the other addon's selling, not Pocket Goblin's.
+function ns.OtherSellersAdvice(count)
+    return count == 1
+        and L["Turn off junk selling in that addon, or Pocket Goblin may not work correctly."]
+        or L["Turn off junk selling in those addons, or Pocket Goblin may not work correctly."]
+end
+
+-- The vendor panel shows the warning at every vendor. With the panel off, chat
+-- says it once a session, and again if the other addon's selling is turned off
+-- and later back on.
+local otherSellersWarned = false
+local function WarnOtherSellers()
+    local sellers = ns.ConflictingSellers()
+    if #sellers == 0 then
+        otherSellersWarned = false
+        return
+    end
+    if otherSellersWarned or db.merchantPanel then return end
+    otherSellersWarned = true
+    C_Timer.After(1, function() -- after the sale messages
+        for _, seller in ipairs(sellers) do
+            if seller.option then
+                Print(L["%s also sells junk at vendors (its \"%s\" option)."], seller.name, seller.option)
+            else
+                Print(L["%s also sells junk at vendors."], seller.name)
+            end
+        end
+        Print(ns.OTHER_SELLERS_PROBLEM .. " " .. ns.OtherSellersAdvice(#sellers))
+    end)
+end
+
+------------------------------------------------------------------------
 -- Events
 ------------------------------------------------------------------------
 
@@ -2172,6 +2267,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         RefreshOverlays()
         RefreshWindow()
         if db.autoSell then SellJunk(false) end
+        WarnOtherSellers()
         ns.UpdateMerchantPanel()
     elseif event == "MERCHANT_CLOSED" then
         merchantOpen = false

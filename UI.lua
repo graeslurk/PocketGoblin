@@ -1940,7 +1940,10 @@ local function BuildVendorPage(page)
         local card, finish = addCard(L["Selling"])
         AddRow(card, L["Sell when a vendor opens"],
             L["Sell junk as soon as you talk to a vendor. Otherwise use \"Sell junk now\" on the auto-sell list."],
-            SettingToggle("autoSell"))
+            SettingToggle("autoSell", function() ns.UpdateMerchantPanel() end))
+        AddDependentRow(card, "autoSell", L["Warn about other junk sellers"],
+            L["A warning on the vendor panel when another addon, like Naowh Forever or Leatrix Plus, also sells junk there. With the panel off, it's said in chat."],
+            SettingToggle("warnOtherSellers", function() ns.UpdateMerchantPanel() end))
         AddRow(card, L["Sell 12 at a time"],
             L["The vendor only buys back your last 12 sales, so selling 12 at a time keeps every sale buyable."],
             SettingToggle("sellBatchLimit"))

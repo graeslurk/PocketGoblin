@@ -16,40 +16,59 @@ You decide, with simple rules (all can be turned off):
 - **Recipes you already know** (off by default)
 - **Anything on your auto-sell list**
 
-And it never sells:
+Hover **Preview** on the Junk rules page to see exactly what would be sold right now, and why.
+
+## Ask first
+
+Nervous about an addon selling good gear? Choose a quality, **green**, **blue**
+(the default) or **epic**, and anything a rule picks from that quality up
+waits for your OK instead of being sold. The vendor panel lists it with its
+value and the reason, and a **Sell** and **Keep** button. In your bags it gets
+a coin with a question mark. Epics always ask.
+
+## What it never sells
 
 - Anything on your **keep list**
 - Items whose name contains words you choose, item types you pick, or items worth more than a limit
 - Weapons and armor that quests ask for
 - **Upgrades**: gear better than what you wear in its slot, or that would fill an empty one
+- **Gear you swap to**: green or better gear you've put on more than once in the last 30 days, like a resistance set or a swap weapon. Levelling gear you wore once and replaced still sells
+- **Items to disenchant**, on enchanters: green and better weapons and armor
 - Items that earn at least 10 silver (or an amount you choose) more at the **auction house** than at a vendor, when Auctionator or TradeSkillMaster is installed
-- Items in an equipment set
+- Items in an **equipment set**, which show the set's icon in your bags
 
-Hover **Preview** on the Junk rules page to see exactly what would be sold right now, and why.
+None of these are destroyed by the trash can or Make room either.
 
-## Features
+## At the vendor
 
-- **Alt+Right-click** any item in your bags to put it on the auto-sell list or the keep list
-- **Hotkeys** in the game's Key Bindings (Pocket Goblin): put the item under your mouse on the auto-sell or keep list, or destroy the cheapest junk. Pressing a key again leaves the item where it is, so a quick tap is always safe
-- **Vendor panel** next to the vendor window: a *Sell junk* button, and buyback of anything you sold, one item at a time or all at once
+- **Sells your junk** as soon as you open a vendor, 12 at a time so every sale can be bought back
+- **Vendor panel** next to the vendor window: *Sell junk*, the items waiting for your OK, and buyback of anything you sold, one item at a time or all at once
+- **Auto-repair**, optionally from guild funds
 - **Suggestions**: sell the same item yourself a few times and your goblin offers to auto-sell it
-- **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs
-- **Earnings** this session, today, per character and across all characters
-- **Repair costs and net profit** for the same periods: what you sold minus what you paid to repair, and your most expensive repair
-- **Destroy button** in your bags for the cheapest junk, with a confirmation and a value limit
+- **Warns** when another addon (Naowh Forever, Leatrix Plus, Scrap and others) also sells junk at vendors, since two sellers can sell what you meant to keep
+
+## In your bags
+
+- **Alt+Right-click** any item to put it on the auto-sell list or the keep list
+- **Coin and lock icons** on junk and kept items, in the default bags and in Baganator, and **equipment set icons** in the default bags
+- **Destroy button** for the cheapest junk, with a confirmation and a value limit
 - **Make room** when your bags are full: a button on the loot window destroys your cheapest junk and loots, in one click
-- **Open containers**: a button in your bags (and a hotkey) opens clams, sacks of loot and other containers, one per click
+- **Open containers**: a button (and a hotkey) opens clams, sacks of loot and other containers, one per click
 - **Sort button** on the default bags: stacks and sorts everything, with junk last
 - **Bag space warning** when your bags are nearly full
-- **Coin and lock icons** on junk and kept items, in the default bags and in Baganator
-- **Auto-repair**, optionally from guild funds
-- **Asks before selling** green, blue or epic gear a rule picks, if you like: the vendor panel lists it with Sell and Keep buttons
-- **Keeps gear you swap to**, like a resistance set or a swap weapon, while levelling gear you've replaced still sells
-- **Equipment set icons** on items in your equipment sets
-- **Keeps items to disenchant** on enchanters: green and better weapons and armor aren't sold or destroyed
-- **Warns** when another addon (Naowh Forever, Leatrix Plus, Scrap and others) also sells junk at vendors, since two sellers can sell what you meant to keep
+- **Hotkeys** in the game's Key Bindings (Pocket Goblin): put the item under your mouse on the auto-sell or keep list, or destroy the cheapest junk. Pressing a key again leaves the item where it is, so a quick tap is always safe
+
+## The goblin's ledger
+
+- **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs
+- **Earnings** this session, today, per character and across all characters
+- **Repair costs and net profit** for the same periods: what you sold minus what you paid to repair. Hover for the full breakdown and your most expensive repair
+
+## Your goblin, your way
+
+- A goblin with **moods**, a **voice** and **milestones** for sales and repairs, who groans at big repair bills
+- Or plain chat messages, only the summaries, or no chat at all
 - **Profiles**, per character, each with its own auto-sell and keep lists. Import another profile's lists into yours without copying its settings
-- A goblin with **moods**, a **voice** and **milestones**, or plain chat messages, only the summaries, or complete silence
 
 ## Commands
 

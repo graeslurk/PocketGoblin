@@ -767,6 +767,20 @@ local function AddRow(card, title, description, makeControl)
     return { titleText, descText, control }
 end
 
+-- A row with its control under the text, for controls too wide to sit next
+-- to it. With notes (every text it can show), a line under the control that
+-- the caller fills with row.note:SetText; the row is as tall as the longest.
+local function AddWideRow(card, title, description, makeControl, notes)
+    AddRow(card, title, description, makeControl)
+    local row = card.rows[#card.rows]
+    row.wide = true
+    if notes then
+        row.note = Text(card, 12, C.muted)
+        row.notes = notes
+    end
+    return row
+end
+
 -- Stacks a card's rows for the given card width (text wraps to fit) and
 -- sizes the card to them.
 local function LayoutCard(card, width)
@@ -774,7 +788,7 @@ local function LayoutCard(card, width)
     local y = -56
     for _, row in ipairs(card.rows) do
         local control = row.control
-        local textWidth = width - 40 - (control and control:GetWidth() + 24 or 0)
+        local textWidth = width - 40 - ((control and not row.wide) and control:GetWidth() + 24 or 0)
         row.title:SetWidth(textWidth)
         local textHeight = row.title:GetStringHeight()
         if row.desc then
@@ -782,14 +796,38 @@ local function LayoutCard(card, width)
             textHeight = textHeight + 4 + row.desc:GetStringHeight()
         end
 
-        local rowHeight = math.max(textHeight, control and control:GetHeight() or 0)
         row.title:ClearAllPoints()
-        row.title:SetPoint("TOPLEFT", 20, y - (rowHeight - textHeight) / 2)
-        if control then
-            control:ClearAllPoints()
-            control:SetPoint("RIGHT", card, "TOPRIGHT", -20, y - rowHeight / 2)
+        if row.wide then
+            row.title:SetPoint("TOPLEFT", 20, y)
+            local rowHeight = textHeight
+            if control then
+                control:ClearAllPoints()
+                control:SetPoint("TOPLEFT", 20, y - textHeight - 12)
+                rowHeight = rowHeight + 12 + control:GetHeight()
+            end
+            if row.note then
+                -- Room for the longest note, so the card doesn't jump.
+                row.note:SetWidth(width - 40)
+                local shown, noteHeight = row.note:GetText(), 0
+                for _, text in ipairs(row.notes) do
+                    row.note:SetText(text)
+                    noteHeight = math.max(noteHeight, row.note:GetStringHeight())
+                end
+                row.note:SetText(shown)
+                row.note:ClearAllPoints()
+                row.note:SetPoint("TOPLEFT", 20, y - rowHeight - 8)
+                rowHeight = rowHeight + 8 + noteHeight
+            end
+            y = y - rowHeight - 20
+        else
+            local rowHeight = math.max(textHeight, control and control:GetHeight() or 0)
+            row.title:SetPoint("TOPLEFT", 20, y - (rowHeight - textHeight) / 2)
+            if control then
+                control:ClearAllPoints()
+                control:SetPoint("RIGHT", card, "TOPRIGHT", -20, y - rowHeight / 2)
+            end
+            y = y - rowHeight - 20
         end
-        y = y - rowHeight - 20
     end
     card:SetHeight(-y)
 end
@@ -1783,6 +1821,13 @@ local function AddDependentRow(card, key, title, description, makeControl)
     dependentRows[#dependentRows + 1] = { AddRow(card, title, description, makeControl), key }
 end
 
+local ASK_QUALITIES = { { 2, L["Green and better"] }, { 3, L["Blue and better"] }, { 4, L["Epic only"] } }
+local ASK_NOTES = {
+    [2] = L["|cffebebedGreen and better:|r every green, blue and purple item a rule picks waits for your OK."],
+    [3] = L["|cffebebedBlue and better:|r blue and purple items a rule picks wait for your OK; greens sell on their own."],
+    [4] = L["|cffebebedEpic only:|r only purple items wait for your OK; greens and blues sell on their own."],
+}
+
 -- What counts as junk. These rules drive selling, the destroy button and
 -- the coins in the bags.
 local function BuildRulesPage(page)
@@ -1796,6 +1841,27 @@ local function BuildRulesPage(page)
                 preview:HookScript("OnLeave", GameTooltip_Hide)
                 return preview
             end)
+        finish()
+
+        card, finish = addCard(L["Ask first"])
+        local askRow
+        local function showAskNote() askRow.note:SetText(ASK_NOTES[ns.db.askQuality] or "") end
+        askRow = AddWideRow(card, L["Ask before selling"],
+            L["Items a junk rule picks, like outgrown gear, aren't sold on their own: the vendor panel lists them "
+                .. "with Sell and Keep buttons, and they get a coin with a question mark in your bags. Items on your "
+                .. "auto-sell list never ask."],
+            function(parent)
+                local segmented = CreateSegmented(parent, ASK_QUALITIES,
+                    function() return ns.db.askQuality end,
+                    function(quality)
+                        ns.db.askQuality = quality
+                        ns.OnRulesChanged()
+                    end)
+                hooksecurefunc(segmented, "Update", showAskNote) -- also on a profile switch
+                return segmented
+            end,
+            { ASK_NOTES[2], ASK_NOTES[3], ASK_NOTES[4] })
+        showAskNote()
         finish()
 
         card, finish = addCard(L["Always keep"])
@@ -1823,6 +1889,14 @@ local function BuildRulesPage(page)
         AddRow(card, L["Upgrades"],
             L["Gear better than what you wear in its slot, or that would fill an empty one. Never destroyed either."],
             SettingToggle("protectUpgrades", ns.OnRulesChanged))
+        AddRow(card, L["Gear you swap to"],
+            L["Green or better gear you've put on more than once in the last 30 days, like a resistance set or a "
+                .. "swap weapon. Gear you wore once and replaced, like while levelling, can still be sold."],
+            SettingToggle("keepWorn", ns.OnRulesChanged))
+        AddRow(card, L["Items to disenchant"],
+            L["On characters with Enchanting: green, blue and purple weapons and armor, so you can disenchant "
+                .. "them instead. Never destroyed either."],
+            SettingToggle("keepDisenchant", ns.OnRulesChanged))
         AddRow(card, L["Valuable items"], L["Items worth more than the amount below."],
             SettingToggle("keepValuable", ns.OnRulesChanged))
         AddDependentRow(card, "keepValuable", L["Worth more than"],
@@ -1909,7 +1983,8 @@ local function BuildRulesPage(page)
 
         card, finish = addCard(L["Soulbound gear"])
         AddRow(card, L["Sell gear you can't use or have outgrown"],
-            L["Gear your class can never equip, like plate on a mage, or far below your level. Up to rare quality."],
+            L["Gear your class can never equip, like plate on a mage, or far below your level. Epics too, but they "
+                .. "always wait for your OK."],
             SettingToggle("sellSoulbound", ns.OnRulesChanged))
         AddDependentRow(card, "sellSoulbound", L["Levels below you"],
             L["How far below your level counts as outgrown."],
@@ -1973,7 +2048,11 @@ local function BuildBagsPage(page)
             SettingToggle("showIcons", ns.OnRulesChanged))
         AddRow(card, L["Lock on kept items"], L["Show a lock on items on your keep list, in the coin's size and corner."],
             SettingToggle("keepIcon", ns.OnRulesChanged))
-        AddRow(card, L["Icon size"], L["Size of the coin and lock."],
+        AddRow(card, L["Equipment set icon"],
+            L["Show the set's icon from the Equipment Manager on items in one of your equipment sets, which are "
+                .. "never sold."],
+            SettingToggle("setIcon", ns.OnRulesChanged))
+        AddRow(card, L["Icon size"], L["Size of the coin, lock and other icons."],
             function(parent)
                 return CreateSlider(parent, 0.5, 2, 0.1, function() return ns.db.iconScale end,
                     function(value) return ("%d%%"):format(value * 100 + 0.5) end,
@@ -1982,7 +2061,7 @@ local function BuildBagsPage(page)
                         ns.RefreshOverlays()
                     end)
             end)
-        AddRow(card, L["Icon position"], L["Which corner of the item the coin and lock sit in."],
+        AddRow(card, L["Icon position"], L["Which corner of the item the icons sit in."],
             function(parent)
                 return CreateCornerPicker(parent,
                     function() return ns.db.iconCorner end,
@@ -2052,13 +2131,55 @@ end
 
 local history = { rows = {} } -- widgets
 
-local STAT_LABELS = { L["THIS SESSION"], "TODAY", L["THIS CHARACTER"], L["ALL CHARACTERS"] }
+local STAT_LABELS = { L["THIS SESSION"], L["TODAY"], L["THIS CHARACTER"], L["ALL CHARACTERS"] }
+local STAT_TITLES = { L["This session"], L["Today"], L["This character"], L["All characters"] }
 local REPAIR_COLOR = { 0.9, 0.55, 0.5 }
+local PROFIT_COLOR = { 0.5, 0.82, 0.5 }
 local STAT_KEYS = { "session", "today", "character", "account" }
 local SOURCES = { { "all", L["Anyone"] }, { "goblin", "Pocket Goblin" }, { "you", L["You"] } }
 
 local function FormatMoney(copper)
     return copper > 0 and GetMoneyString(copper, true) or "0"
+end
+
+-- What you made after paying for repairs (the guild's payments aren't yours).
+local function NetProfit(period)
+    return period.all - period.repairs
+end
+
+local function FormatNet(copper)
+    if copper < 0 then return "-" .. FormatMoney(-copper) end
+    return copper > 0 and "+" .. FormatMoney(copper) or "0"
+end
+
+-- The breakdown behind an earnings tile.
+local function ShowEarningsTooltip(owner, index)
+    local period = ns.GetEarnings()[STAT_KEYS[index]]
+    local function line(label, text, color)
+        color = color or C.text
+        GameTooltip:AddDoubleLine(label, text, 0.7, 0.7, 0.7, color[1], color[2], color[3])
+    end
+    GameTooltip:SetOwner(owner, "ANCHOR_BOTTOM")
+    GameTooltip:SetText(STAT_TITLES[index], 1, 1, 1)
+    line(L["Junk your goblin sold"], FormatMoney(math.max(period.junk, 0)))
+    line(L["All vendor sales"], FormatMoney(math.max(period.all, 0)))
+    line(L["Repairs"], period.repairs > 0 and "-" .. FormatMoney(period.repairs) or "0", REPAIR_COLOR)
+    if period.guildRepairs > 0 then
+        line(L["Repairs the guild paid"], FormatMoney(period.guildRepairs))
+    end
+    local net = NetProfit(period)
+    line(L["Net"], FormatNet(net), net < 0 and REPAIR_COLOR or PROFIT_COLOR)
+    local biggest = period.biggestRepair
+    if biggest then
+        GameTooltip:AddLine(" ")
+        line(L["Most expensive repair"], FormatMoney(biggest.cost), REPAIR_COLOR)
+        local where = biggest.vendor or L["Unknown vendor"]
+        if period.biggestRepairBy then where = period.biggestRepairBy .. ", " .. where end
+        GameTooltip:AddLine(where .. ", " .. date("%b %d, %Y", biggest.time), 0.53, 0.54, 0.58)
+    end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(L["Net is all your vendor sales minus the repairs you paid yourself."], 0.53, 0.54, 0.58, true)
+    GameTooltip:Show()
 end
 
 local function VisitTime(timestamp)
@@ -2212,7 +2333,7 @@ local function BuildHistoryPage(page)
     local stats = CreateFrame("Frame", nil, page)
     stats:SetPoint("TOPLEFT", 20, -20)
     stats:SetPoint("TOPRIGHT", -20, -20)
-    stats:SetHeight(86)
+    stats:SetHeight(122)
     Rounded(stats, "BACKGROUND", C.card)
     Rounded(stats, "BORDER", C.cardBorder, "rounded-border")
 
@@ -2226,7 +2347,15 @@ local function BuildHistoryPage(page)
         value:SetPoint("TOPLEFT", caption, "BOTTOMLEFT", 0, -6)
         local allSales = Text(stats, 11, C.muted)
         allSales:SetPoint("TOPLEFT", value, "BOTTOMLEFT", 0, -4)
-        history.stats[i] = { junk = value, all = allSales }
+        local repairs = Text(stats, 11, C.muted)
+        repairs:SetPoint("TOPLEFT", allSales, "BOTTOMLEFT", 0, -3)
+        local net = Text(stats, 11, C.muted)
+        net:SetPoint("TOPLEFT", repairs, "BOTTOMLEFT", 0, -3)
+        -- Hovering a tile shows its breakdown.
+        local hover = CreateFrame("Frame", nil, stats)
+        hover:SetScript("OnEnter", function(self) ShowEarningsTooltip(self, i) end)
+        hover:SetScript("OnLeave", GameTooltip_Hide)
+        history.stats[i] = { junk = value, all = allSales, repairs = repairs, net = net, hover = hover }
         if i > 1 then
             local divider = stats:CreateTexture(nil, "ARTWORK")
             divider:SetColorTexture(1, 1, 1, 0.06)
@@ -2240,6 +2369,10 @@ local function BuildHistoryPage(page)
         for i, caption in ipairs(captions) do
             local x = (i - 1) * tileWidth
             caption:SetPoint("TOPLEFT", x + 20, -18)
+            local hover = history.stats[i].hover
+            hover:SetPoint("TOPLEFT", x, 0)
+            hover:SetPoint("BOTTOMLEFT", x, 0)
+            hover:SetWidth(tileWidth)
             if dividers[i] then
                 dividers[i]:SetPoint("TOPLEFT", x, -14)
                 dividers[i]:SetPoint("BOTTOMLEFT", x, 14)
@@ -2290,10 +2423,6 @@ local function BuildHistoryPage(page)
         end)
     history.sourceMenu:SetPoint("TOPRIGHT", -16, -14)
 
-    history.repairs = Text(card, 11, C.muted)
-    history.repairs:SetPoint("RIGHT", history.sourceMenu, "LEFT", -12, 0)
-    history.repairs:SetJustifyH("RIGHT")
-
     local area = CreateFrame("Frame", nil, card)
     area:SetPoint("TOPLEFT", 10, -50)
     area:SetPoint("BOTTOMRIGHT", -10, 10)
@@ -2321,17 +2450,17 @@ local function BuildHistoryPage(page)
 end
 
 local function RefreshHistory()
-    local earnings, repairs, guildRepairs = ns.GetEarnings()
+    local earnings = ns.GetEarnings()
     for i, key in ipairs(STAT_KEYS) do
-        history.stats[i].junk:SetText(FormatMoney(math.max(earnings[key].junk, 0)))
-        history.stats[i].all:SetText(L["All sales: "] .. FormatMoney(math.max(earnings[key].all, 0)))
+        local period, tile = earnings[key], history.stats[i]
+        tile.junk:SetText(FormatMoney(math.max(period.junk, 0)))
+        tile.all:SetText(L["All sales: "] .. FormatMoney(math.max(period.all, 0)))
+        tile.repairs:SetText(L["Repairs: "] .. (period.repairs > 0 and "-" .. FormatMoney(period.repairs) or "0"))
+        local net = NetProfit(period)
+        local color = net < 0 and REPAIR_COLOR or net > 0 and PROFIT_COLOR or C.muted
+        tile.net:SetText(L["Net: "] .. FormatNet(net))
+        tile.net:SetTextColor(color[1], color[2], color[3])
     end
-    local repairText = repairs > 0 and (L["Repairs: "] .. GetMoneyString(repairs, true)) or ""
-    if guildRepairs > 0 then
-        repairText = repairText .. (repairText ~= "" and "  " or L["Repairs: "])
-            .. L["|cff8a8b93(guild paid "] .. GetMoneyString(guildRepairs, true) .. ")|r"
-    end
-    history.repairs:SetText(repairText)
     history.sourceMenu:UpdateLabel()
 
     -- Visits with the sales that match the "Sold by" filter, then their
@@ -2509,7 +2638,14 @@ local function AddProfileCards(addCard)
     end
 end
 
-local MESSAGE_STYLES = { { "goblin", L["Goblin"] }, { "plain", L["Plain"] }, { "off", L["Off"] } }
+local MESSAGE_STYLES = { { "goblin", L["Goblin"] }, { "plain", L["Plain"] }, { "summaries", L["Summaries"] },
+    { "none", L["None"] } }
+local MESSAGE_NOTES = {
+    goblin = L["|cffebebedGoblin:|r messages in its own words, its mood under the title, a cheer at milestones and a groan at big repair bills."],
+    plain = L["|cffebebedPlain:|r short, plain messages."],
+    summaries = L["|cffebebedSummaries:|r only what was sold, repaired and bought back."],
+    none = L["|cffebebedNone:|r nothing, except when you can't afford repairs, and replies to your own commands and clicks."],
+}
 
 local function BuildGeneralPage(page)
     CreateCardPage(page, function(addCard)
@@ -2522,17 +2658,22 @@ local function BuildGeneralPage(page)
         finish()
 
         card, finish = addCard(L["Chat messages"])
-        AddRow(card, L["How your goblin talks"],
-            L["Goblin: messages in its own words, its mood under the title and a cheer at sales milestones. "
-                .. "Plain: short, plain messages. Off: only the summaries after selling, repairing and buying back."],
+        local row
+        local function showNote() row.note:SetText(MESSAGE_NOTES[ns.db.messages] or "") end
+        row = AddWideRow(card, L["How your goblin talks"],
+            L["What your goblin says in chat. The History page keeps every sale and repair either way."],
             function(parent)
-                return CreateSegmented(parent, MESSAGE_STYLES,
+                local segmented = CreateSegmented(parent, MESSAGE_STYLES,
                     function() return ns.db.messages end,
                     function(style)
                         ns.db.messages = style
                         ns.RefreshWindow()
                     end)
-            end)
+                hooksecurefunc(segmented, "Update", showNote) -- also on a profile switch
+                return segmented
+            end,
+            { MESSAGE_NOTES.goblin, MESSAGE_NOTES.plain, MESSAGE_NOTES.summaries, MESSAGE_NOTES.none })
+        showNote()
         finish()
 
         AddProfileCards(addCard)

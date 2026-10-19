@@ -1,5 +1,6 @@
 -- Pocket Goblin's panel next to the vendor window: a warning when another
--- addon also sells junk, a "Sell junk" button with what it would sell, an auto-sell suggestion for items you keep
+-- addon also sells junk, a "Sell junk" button with what it would sell,
+-- the items that wait for your OK before they're sold, an auto-sell suggestion for items you keep
 -- selling yourself, what you can buy back (a button each, or all at once),
 -- and what this visit earned.
 
@@ -13,11 +14,15 @@ local SELL_HEIGHT = 56     -- junk summary and the Sell junk button
 local SUGGEST_HEIGHT = 104 -- "auto-sell this?" suggestion, when there is one
 local SECTION_HEIGHT = 30  -- "BUY BACK" heading and the Buy back all button
 local ROW_HEIGHT = 28
+local ASK_ROW_HEIGHT = 42
+local MAX_ASK_ROWS = 6
+local MORE_HEIGHT = 20     -- "and 3 more" under the asked items
 local FOOTER_HEIGHT = 36
 local MAX_ROWS = 12 -- the vendor's buyback list holds 12 items
 
 local panel
 local rows = {}
+local askRows = {}
 local WARNING_COLOR = { 1, 0.6, 0.25, 1 }
 local dismissed = false -- closed with the X for this vendor visit
 
@@ -79,6 +84,79 @@ local function UpdateRow(row, sold)
     row.name:SetText(name .. (sold.count > 1 and ("  |cff8a8b93x" .. sold.count .. "|r") or ""))
     row.name:SetTextColor(color[1], color[2], color[3])
     row.value:SetText(GetMoneyString(sold.value, true))
+end
+
+-- A row for an item that waits for your OK: name, value and why it would
+-- sell, with Keep and Sell buttons.
+local function CreateAskRow()
+    local UI = ns.UI
+    local row = CreateFrame("Frame", nil, panel)
+    row:SetHeight(ASK_ROW_HEIGHT)
+    row:EnableMouse(true)
+
+    local hover = UI.Rounded(row, "BACKGROUND", { 1, 1, 1, 0.045 })
+    hover:Hide()
+
+    row.border = row:CreateTexture(nil, "ARTWORK", nil, 1)
+    row.border:SetSize(26, 26)
+    row.border:SetPoint("LEFT", 4, 0)
+    row.icon = row:CreateTexture(nil, "ARTWORK", nil, 2)
+    row.icon:SetSize(24, 24)
+    row.icon:SetPoint("CENTER", row.border)
+    row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    -- The buttons sit level with the name, so the value and reason
+    -- underneath get the row's full width.
+    row.sell = UI.CreateButton(row, L["Sell"], 44, true)
+    row.sell:SetHeight(22)
+    row.sell:SetPoint("TOPRIGHT", -2, -3)
+    row.sell:SetScript("OnClick", function() ns.SellJunk(true, true, row.entry.bag, row.entry.slot) end)
+    row.keep = UI.CreateButton(row, L["Keep"], 44)
+    row.keep:SetHeight(22)
+    row.keep:SetPoint("RIGHT", row.sell, "LEFT", -4, 0)
+    row.keep:SetScript("OnClick", function() ns.SetFlag(row.entry.info.itemID, false) end)
+    row.keep:HookScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(L["Keep"], 1, 1, 1)
+        GameTooltip:AddLine(L["Puts it on your keep list, so it's never sold or asked about again."], nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    row.keep:HookScript("OnLeave", GameTooltip_Hide)
+
+    row.name = UI.Text(row, 12, UI.C.text)
+    row.name:SetPoint("TOPLEFT", row.border, "TOPRIGHT", 6, 0) -- level with the buttons
+    row.name:SetPoint("RIGHT", row.keep, "LEFT", -6, 0)
+    row.name:SetWordWrap(false)
+    row.detail = UI.Text(row, 11, UI.C.muted)
+    row.detail:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -6)
+    row.detail:SetPoint("RIGHT", -2, 0)
+    row.detail:SetWordWrap(false)
+
+    row:SetScript("OnEnter", function(self)
+        hover:Show()
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetBagItem(self.entry.bag, self.entry.slot)
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", function()
+        hover:Hide()
+        GameTooltip_Hide()
+    end)
+    return row
+end
+
+local function UpdateAskRow(row, entry, busy)
+    row.entry = entry
+    local info = entry.info
+    row.icon:SetTexture(info.iconFileID)
+    local color = QualityColor(info.quality)
+    row.border:SetColorTexture(color[1], color[2], color[3], 0.9)
+    local name = C_Item.GetItemInfo(info.itemID) or (info.hyperlink and info.hyperlink:match("%[(.-)%]")) or "?"
+    row.name:SetText(name .. ((info.stackCount or 1) > 1 and ("  |cff8a8b93x" .. info.stackCount .. "|r") or ""))
+    row.name:SetTextColor(color[1], color[2], color[3])
+    row.detail:SetText(GetMoneyString(entry.value, true) .. "  |cff8a8b93" .. (ns.REASONS[entry.reason] or "") .. "|r")
+    row.sell:SetEnabled(not busy)
+    row.keep:SetEnabled(not busy)
 end
 
 local function CreatePanel()
@@ -218,6 +296,32 @@ local function CreatePanel()
     itemHover:SetScript("OnLeave", GameTooltip_Hide)
     panel.suggest = suggest
 
+    -- Ask first: heading and Sell all button over the items that wait for your OK.
+    local ask = CreateFrame("Frame", nil, panel)
+    ask:SetHeight(SECTION_HEIGHT)
+    local askLine = ask:CreateTexture(nil, "ARTWORK")
+    askLine:SetColorTexture(1, 1, 1, 0.06)
+    askLine:SetHeight(1)
+    askLine:SetPoint("TOPLEFT", 1, 0)
+    askLine:SetPoint("TOPRIGHT", -1, 0)
+    local askLabel = UI.Text(ask, 11, C.muted)
+    askLabel:SetPoint("LEFT", 14, -1)
+    askLabel:SetText(L["WAITING FOR YOUR OK"])
+    ask.sellAll = UI.CreateButton(ask, L["Sell all"], 70)
+    ask.sellAll:SetHeight(20)
+    ask.sellAll.label:SetFont(ask.sellAll.label:GetFont(), 11, "")
+    ask.sellAll:SetPoint("RIGHT", -10, -1)
+    ask.sellAll:SetScript("OnClick", function() ns.SellJunk(true, true) end)
+    ask.sellAll:HookScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(L["Sell all"], 1, 1, 1)
+        GameTooltip:AddLine(L["Sells every item waiting for your OK, also those not listed here."], nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    ask.sellAll:HookScript("OnLeave", GameTooltip_Hide)
+    ask.more = UI.Text(panel, 11, C.muted)
+    panel.ask = ask
+
     -- Buy back: heading and Buy back all button over the list of sold items.
     panel.buyback = CreateFrame("Frame", nil, panel)
     panel.buyback:SetHeight(SECTION_HEIGHT)
@@ -326,6 +430,40 @@ function ns.UpdateMerchantPanel()
             and (L["Psst! You've hawked this %d times yourself. Shall I handle it from now on?"]):format(suggestCount)
             or (L["You've sold this yourself %d times. Auto-sell it from now on?"]):format(suggestCount))
         y = y + SUGGEST_HEIGHT
+    end
+
+    -- Items that wait for your OK, between the suggestion and buying back.
+    local asked = ns.GetAskedItems()
+    local ask = panel.ask
+    ask:SetShown(#asked > 0)
+    ask.more:Hide()
+    local shownAsked = math.min(#asked, MAX_ASK_ROWS)
+    if #asked > 0 then
+        ask:SetPoint("TOPLEFT", 0, -y)
+        ask:SetPoint("TOPRIGHT", 0, -y)
+        ask.sellAll:SetEnabled(not busy)
+        y = y + SECTION_HEIGHT
+        for i = 1, shownAsked do
+            local row = askRows[i] or CreateAskRow()
+            askRows[i] = row
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", 8, -y)
+            row:SetPoint("TOPRIGHT", -8, -y)
+            UpdateAskRow(row, asked[i], busy)
+            row:Show()
+            y = y + ASK_ROW_HEIGHT
+        end
+        if #asked > shownAsked then
+            ask.more:SetText((L["and %d more"]):format(#asked - shownAsked))
+            ask.more:ClearAllPoints()
+            ask.more:SetPoint("TOPLEFT", 14, -y - 3)
+            ask.more:Show()
+            y = y + MORE_HEIGHT
+        end
+        y = y + 6
+    end
+    for i = shownAsked + 1, #askRows do
+        askRows[i]:Hide()
     end
 
     panel.buyback:SetShown(#items > 0)

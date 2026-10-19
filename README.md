@@ -35,6 +35,7 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 - **Suggestions**: sell the same item yourself a few times and your goblin offers to auto-sell it
 - **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs
 - **Earnings** this session, today, per character and across all characters
+- **Repair costs and net profit** for the same periods: what you sold minus what you paid to repair, and your most expensive repair
 - **Destroy button** in your bags for the cheapest junk, with a confirmation and a value limit
 - **Make room** when your bags are full: a button on the loot window destroys your cheapest junk and loots, in one click
 - **Open containers**: a button in your bags (and a hotkey) opens clams, sacks of loot and other containers, one per click
@@ -42,9 +43,13 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 - **Bag space warning** when your bags are nearly full
 - **Coin and lock icons** on junk and kept items, in the default bags and in Baganator
 - **Auto-repair**, optionally from guild funds
+- **Asks before selling** green, blue or epic gear a rule picks, if you like: the vendor panel lists it with Sell and Keep buttons
+- **Keeps gear you swap to**, like a resistance set or a swap weapon, while levelling gear you've replaced still sells
+- **Equipment set icons** on items in your equipment sets
+- **Keeps items to disenchant** on enchanters: green and better weapons and armor aren't sold or destroyed
 - **Warns** when another addon (Naowh Forever, Leatrix Plus, Scrap and others) also sells junk at vendors, since two sellers can sell what you meant to keep
 - **Profiles**, per character, each with its own auto-sell and keep lists. Import another profile's lists into yours without copying its settings
-- A goblin with **moods**, a **voice** and **milestones**, or plain chat messages, or none
+- A goblin with **moods**, a **voice** and **milestones**, or plain chat messages, only the summaries, or complete silence
 
 ## Commands
 
@@ -54,7 +59,7 @@ Hover **Preview** on the Junk rules page to see exactly what would be sold right
 | `/goblin sell` | Sell junk now (vendor must be open) |
 | `/goblin sort` | Stack and sort your bags |
 | `/goblin add`, `keep`, `remove <item>` | Put an item on a list, or take it off |
-| `/goblin chat [goblin\|plain\|off]` | Choose how the goblin talks in chat |
+| `/goblin chat [goblin\|plain\|summaries\|none]` | Choose how the goblin talks in chat |
 | `/goblin profile [name]` | Show or switch this character's profile |
 | `/goblin welcome` | Show the welcome window again |
 | `/goblin debug` | Details to copy into a bug report |

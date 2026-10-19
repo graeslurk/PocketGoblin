@@ -12,7 +12,10 @@ local LAST_BAG = NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4
 local JUNK_ATLAS = "bags-junkcoin"
 local COIN_SIZE = 17 -- at 100% icon scale
 local COMMON = Enum.ItemQuality and Enum.ItemQuality.Common or 1
+local UNCOMMON = Enum.ItemQuality and Enum.ItemQuality.Uncommon or 2
 local RARE = Enum.ItemQuality and Enum.ItemQuality.Rare or 3
+local EPIC = Enum.ItemQuality and Enum.ItemQuality.Epic or 4
+local DISENCHANT = 13262 -- the enchanter's Disenchant spell
 local MAX_HISTORY = 30 -- vendor visits kept per character
 local WEAPON = Enum.ItemClass and Enum.ItemClass.Weapon or 2
 local ARMOR = Enum.ItemClass and Enum.ItemClass.Armor or 4
@@ -65,6 +68,10 @@ local CLASS_GEAR = {
 local FALLBACK_ICON = "Interface\\Buttons\\UI-GroupLoot-Coin-Up"
 local LOCK_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\icon-lock"
 local LOCK_COLOR = { 0.55, 0.8, 1 }
+local ASK_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\icon-ask"
+local ASK_COLOR = { 1, 0.82, 0.25 }
+local SET_FALLBACK_ICON = 134400 -- the question mark the Equipment Manager gives sets without an icon
+local WORN_DAYS = 30 -- gear swapped to this recently is kept (the keepWorn rule)
 local BAG_ADDONS = { "Baganator", "Bagnon", "AdiBags", "ArkInventory", "BetterBags", "Combuctor", "OneBag3" }
 
 local defaults = {
@@ -76,7 +83,8 @@ local defaults = {
     whiteGearLevel = 10,  -- ...from this character level (before it, you still use them)
     skipQuestGear = true, -- never sell gear that quests ask for (QuestGear.lua), unless flagged
     -- Chat messages: "goblin" (the goblin's voice, moods and milestones),
-    -- "plain" or "off" (sale summaries and repairs always print).
+    -- "plain", "summaries" (only what was sold, repaired or bought back) or
+    -- "none" (nothing on its own; replies to commands and clicks still print).
     messages = "goblin",
     tooltipValue = true, -- show why and for how much an item sells, in its tooltip
     sellCheapWhites = false,    -- sell white items cheaper than cheapWhiteLimit...
@@ -111,9 +119,13 @@ local defaults = {
     keepValuable = false, -- never sell items worth more than keepValueLimit...
     keepValueLimit = 10000, -- ...copper per item (1 gold)
     protectUpgrades = true, -- never sell gear better than what you wear in its slot
+    keepDisenchant = true,  -- on enchanters, never sell gear that can be disenchanted
+    keepWorn = true,        -- never sell green or better gear you've put on more than once in WORN_DAYS days
+    askQuality = 3,  -- a rule's sales of this quality (2 green, 3 blue, 4 epic) or better wait for your OK
     keepAuction = true,  -- with an auction addon, never sell items that earn at least...
     auctionProfit = 1000, -- ...this much copper more there than at a vendor (10 silver), after the house's cut
     keepIcon = true,  -- lock icon on items on the keep list
+    setIcon = true,   -- the set's icon on items in an equipment set
     addedAt = {},     -- [itemID] = time() it was added to the auto-sell list
     manualSales = {},  -- [itemID] = times you sold it yourself (for auto-sell suggestions)
     noSuggest = {},    -- [itemID] = true: never suggest auto-selling it again
@@ -137,6 +149,10 @@ local CHARACTER_DEFAULTS = {
     allToday = 0,
     repairs = 0,      -- copper spent on repairs (your own gold)
     repairsGuild = 0, -- copper the guild bank paid for repairs
+    repairsToday = 0, repairsGuildToday = 0, -- the same, since the day change
+    ledgerDay = "",   -- the day the goblin last grumbled about repairs costing more than sales
+    -- biggestRepair = { cost, time, vendor }: the most expensive vendor visit's repairs
+    worn = {},        -- [itemID] = { seen = time() last seen equipped, equips = times put on }
     milestones = {}, -- [milestone key] = true once reached
 }
 
@@ -145,7 +161,7 @@ local DEFAULT_PROFILE = "Default"
 local db -- the active profile (PocketGoblinDB.profiles[name])
 local characterKey
 local charData -- PocketGoblinDB.characters[characterKey]
-local session = { earned = 0, sold = 0, allEarned = 0 }
+local session = { earned = 0, sold = 0, allEarned = 0, repairs = 0, repairsGuild = 0 }
 local pendingOwnSales = {} -- { itemID, count } Pocket Goblin sold, not yet seen in the buyback list
 local vendorName
 local currentVisit -- history entry for the open vendor window
@@ -167,7 +183,13 @@ ns.Print = Print
 
 -- Messages the user can mute with the messages setting.
 local function Notify(msg, ...)
-    if db and db.messages ~= "off" then Print(msg, ...) end
+    if db and db.messages ~= "summaries" and db.messages ~= "none" then Print(msg, ...) end
+end
+
+-- Summaries of what the goblin did on its own (sold, repaired, bought back),
+-- muted only by "none".
+local function Summary(msg, ...)
+    if db and db.messages ~= "none" then Print(msg, ...) end
 end
 
 -- True when the goblin speaks in its own voice (and shows moods and milestones).
@@ -175,7 +197,7 @@ function ns.GoblinVoice()
     return ns.db ~= nil and ns.db.messages == "goblin"
 end
 
-local MESSAGE_STYLES = { goblin = L["Goblin"], plain = L["Plain"], off = L["Off"] }
+local MESSAGE_STYLES = { goblin = L["Goblin"], plain = L["Plain"], summaries = L["Summaries only"], none = L["None"] }
 function ns.MessageStyleName(style)
     return MESSAGE_STYLES[style] or style
 end
@@ -225,8 +247,68 @@ function ns.AuctionPrice(itemID)
     return AuctionPrice(itemID)
 end
 
+-- True if this character knows Disenchant.
+local function KnowsDisenchant()
+    return IsPlayerSpell ~= nil and IsPlayerSpell(DISENCHANT)
+end
+
+-- True if this character could disenchant the item: green, blue or purple
+-- weapons and armor (not shirts, tabards or fishing poles). Doesn't check
+-- whether your Enchanting skill is high enough for it yet.
+local function CanDisenchant(itemID)
+    if not KnowsDisenchant() then return false end
+    local _, _, _, equipLoc, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
+    if classID ~= WEAPON and classID ~= ARMOR then return false end
+    if not equipLoc or equipLoc == "" or COSMETIC_SLOTS[equipLoc] then return false end
+    if classID == WEAPON and subClassID == FISHING_POLE then return false end
+    local quality = C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(itemID)
+        or select(3, C_Item.GetItemInfo(itemID))
+    return quality ~= nil and quality >= UNCOMMON and quality <= EPIC
+end
+
+-- True if the item is green or better gear you've put on more than once in
+-- the last WORN_DAYS days, like a resistance set or a swap weapon. Gear you
+-- wore once and replaced (levelling gear) doesn't count.
+local function SwappedTo(itemID)
+    local worn = charData and charData.worn[itemID]
+    if type(worn) ~= "table" or worn.equips < 2 or time() - worn.seen > WORN_DAYS * 86400 then return false end
+    local quality = C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(itemID)
+        or select(3, C_Item.GetItemInfo(itemID))
+    return quality ~= nil and quality >= UNCOMMON
+end
+
+-- Notes what you have on: when each item was last seen on you, and how often
+-- you've put it on (counted when it appears since the last check). Forgets
+-- gear not worn in WORN_DAYS days.
+local equippedBefore -- item IDs on you at the last check; nil until the first
+local function RecordWorn()
+    if not charData then return end
+    local now, equipped = time(), {}
+    for slot = 1, 19 do
+        local itemID = GetInventoryItemID("player", slot)
+        if itemID then equipped[itemID] = true end
+    end
+    for itemID in pairs(equipped) do
+        local worn = charData.worn[itemID]
+        if type(worn) ~= "table" then
+            worn = { equips = 0 }
+            charData.worn[itemID] = worn
+        end
+        -- Gear you already had on at login counts once, not again each login.
+        if worn.equips == 0 or (equippedBefore and not equippedBefore[itemID]) then
+            worn.equips = worn.equips + 1
+        end
+        worn.seen = now
+    end
+    equippedBefore = equipped
+    for itemID, worn in pairs(charData.worn) do
+        if type(worn) ~= "table" or now - worn.seen > WORN_DAYS * 86400 then charData.worn[itemID] = nil end
+    end
+end
+
 -- Which keep rule protects an item: "name" (plus the matching word),
--- "type", "valuable", "upgrade" or "auction"; nil if none does. bound: the
+-- "type", "valuable", "upgrade", "swapped", "disenchant" or "auction"; nil if
+-- none does. bound: the
 -- item in your bags is soulbound (so it can't be auctioned). Items you flag
 -- yourself ignore these rules.
 local function KeepRule(itemID, bound)
@@ -246,6 +328,8 @@ local function KeepRule(itemID, bound)
         if price > db.keepValueLimit then return "valuable" end
     end
     if db.protectUpgrades and IsUpgrade(itemID) then return "upgrade" end
+    if db.keepWorn and SwappedTo(itemID) then return "swapped" end
+    if db.keepDisenchant and CanDisenchant(itemID) then return "disenchant" end
     if WorthAuctioning(itemID, bound) then return "auction" end
 end
 ns.KeepRule = KeepRule
@@ -255,6 +339,8 @@ function ns.KeepRuleText(rule, word)
     if rule == "name" then return (L['name contains "%s"']):format(word) end
     if rule == "type" then return L["its item type"] end
     if rule == "upgrade" then return L["an upgrade for you"] end
+    if rule == "disenchant" then return L["for disenchanting"] end
+    if rule == "swapped" then return L["gear you swap to"] end
     if rule == "auction" then return L["worth more at the auction house"] end
     return L["worth more than "] .. GetMoneyString(db.keepValueLimit, true)
 end
@@ -554,7 +640,7 @@ local function RuleReason(info, bag, slot)
         if price > 0 and price < db.cheapWhiteLimit then return "cheap" end
     end
 
-    if isGear and info.isBound and quality and quality <= RARE and db.sellSoulbound then
+    if isGear and info.isBound and quality and quality <= EPIC and db.sellSoulbound then
         if not CanClassUse(classID, subClassID) then return "unusable" end
         local requiredLevel = select(5, C_Item.GetItemInfo(itemID)) or 0
         if requiredLevel > 0 and requiredLevel <= UnitLevel("player") - db.outgrownLevels then
@@ -565,7 +651,7 @@ local function RuleReason(info, bag, slot)
     -- Soulbound armor lighter than you wear, like leather on a warrior. Only
     -- soulbound: anything else could still go to the auction house. Cloaks
     -- are cloth for everyone, so they don't count.
-    if isGear and info.isBound and quality and quality <= RARE and db.sellLighterArmor and classID == ARMOR
+    if isGear and info.isBound and quality and quality <= EPIC and db.sellLighterArmor and classID == ARMOR
         and subClassID >= CLOTH and subClassID <= PLATE and equipLoc ~= "INVTYPE_CLOAK" then
         local heaviest = HeaviestArmor()
         if heaviest and subClassID < heaviest then return "lighterArmor" end
@@ -593,6 +679,15 @@ local function JunkReason(info, bag, slot, ignoreKeepRules)
     return reason
 end
 ns.JunkReason = JunkReason
+
+-- True if an item a junk rule would sell waits for your OK at the vendor:
+-- from the askQuality setting up, and epics always. Items on your auto-sell
+-- list never ask.
+local function AsksFirst(info, reason)
+    if not reason or reason == "flagged" or not info.quality then return false end
+    return info.quality >= math.min(db.askQuality, EPIC)
+end
+ns.AsksFirst = AsksFirst
 
 ------------------------------------------------------------------------
 -- Bag overlay: coin icon and greyed-out icon on items that will be sold
@@ -688,13 +783,86 @@ local function SetLock(button, show)
     end
 end
 
+-- A coin with a "?" in the coin's corner, for items that wait for your OK.
+local function SetAsk(button, show)
+    local icon = button.PocketGoblinAsk
+    if show and not icon then
+        icon = button:CreateTexture(nil, "OVERLAY", nil, 7)
+        icon:SetTexture(ASK_ICON) -- in colour, not tinted
+        button.PocketGoblinAsk = icon
+    end
+    if icon then
+        local size = COIN_SIZE * db.iconScale
+        icon:SetSize(size, size)
+        icon:ClearAllPoints()
+        icon:SetPoint(db.iconCorner, 0, 0)
+        icon:SetShown(show)
+    end
+end
+
+-- Equipment set icons by set name, from the Equipment Manager.
+local setIcons
+local function SetIconFor(setNames)
+    if not setIcons then
+        setIcons = {}
+        local sets = C_EquipmentSet and C_EquipmentSet.GetEquipmentSetIDs and C_EquipmentSet.GetEquipmentSetIDs()
+        for _, setID in ipairs(sets or {}) do
+            local name, icon = C_EquipmentSet.GetEquipmentSetInfo(setID)
+            if name then setIcons[name] = icon end
+        end
+    end
+    if type(setNames) ~= "string" then return SET_FALLBACK_ICON end
+    -- The game lists the item's sets as "Tank, Fire resistance"; use the first.
+    return setIcons[setNames] or setIcons[setNames:match("^(.-), ") or ""] or SET_FALLBACK_ICON
+end
+
+-- The icon of the item's equipment set, framed, in the coin's corner. icon
+-- is nil to hide it.
+local function SetSetIcon(button, icon)
+    local frame = button.PocketGoblinSet
+    if icon and not frame then
+        frame = CreateFrame("Frame", nil, button)
+        frame:SetFrameLevel(button:GetFrameLevel() + 2)
+        local border = frame:CreateTexture(nil, "ARTWORK", nil, 1)
+        border:SetAllPoints()
+        border:SetColorTexture(0, 0, 0, 0.9)
+        frame.icon = frame:CreateTexture(nil, "ARTWORK", nil, 2)
+        frame.icon:SetPoint("TOPLEFT", 1, -1)
+        frame.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+        frame.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        button.PocketGoblinSet = frame
+    end
+    if frame then
+        if icon then frame.icon:SetTexture(icon) end
+        local size = COIN_SIZE * db.iconScale * 0.8
+        frame:SetSize(size, size)
+        frame:ClearAllPoints()
+        frame:SetPoint(db.iconCorner, 1, -1)
+        frame:SetShown(icon ~= nil)
+    end
+end
+
+-- The item's equipment set names, or nil if it isn't in one.
+local function EquipmentSets(bag, slot)
+    local getInfo = C_Container.GetContainerItemEquipmentSetInfo
+    if not getInfo then return nil end
+    local ok, inSet, names = pcall(getInfo, bag, slot)
+    if ok and inSet then return names or "" end
+end
+
 local function UpdateButtonOverlay(button)
     local bag, slot = GetBagAndSlot(button)
     local info = bag and C_Container.GetContainerItemInfo(bag, slot)
-    local junk = info ~= nil and not info.hasNoValue and JunkReason(info, bag, slot) ~= nil
+    local reason = info ~= nil and not info.hasNoValue and JunkReason(info, bag, slot)
+    local asks = AsksFirst(info, reason)
+    local junk = reason and not asks
+    local kept = info ~= nil and db.keepIcon and db.items[info.itemID] == false
 
     SetCoin(button, junk and db.showIcons)
-    SetLock(button, info ~= nil and db.keepIcon and db.items[info.itemID] == false)
+    SetLock(button, kept)
+    SetAsk(button, asks and db.showIcons)
+    local sets = info ~= nil and db.setIcon and not kept and EquipmentSets(bag, slot)
+    SetSetIcon(button, sets and SetIconFor(sets) or nil)
     SetGreyedOut(button, junk and db.greyOut, info ~= nil and info.isLocked or false)
 end
 
@@ -781,7 +949,8 @@ local function RegisterBaganatorPlugin()
         -- Items in the bags get the full rules; others (bank etc.) flags only.
         local info = bag and slot and bag >= 0 and bag <= LAST_BAG and C_Container.GetContainerItemInfo(bag, slot)
         if info and info.itemID == itemID then
-            return JunkReason(info, bag, slot) ~= nil
+            local reason = JunkReason(info, bag, slot)
+            return reason ~= nil and not AsksFirst(info, reason)
         end
         local _, _, quality = C_Item.GetItemInfo(itemLink or itemID)
         return IsJunk(itemID, quality) and true or false
@@ -854,6 +1023,15 @@ local function Debug(toChat)
     ns.DebugDestroyButtons(add)
     if ns.DebugMakeRoom then ns.DebugMakeRoom(add) end
     if ns.DebugSortButton then ns.DebugSortButton(add) else add("Sort button: BagSort.lua not loaded") end
+    add("Disenchant: %s, keep rule %s.", KnowsDisenchant() and "known" or "not known",
+        db.keepDisenchant and "on" or "off")
+    local worn, swapped = 0, 0
+    for _, entry in pairs(charData.worn) do
+        worn = worn + 1
+        if type(entry) == "table" and entry.equips >= 2 then swapped = swapped + 1 end
+    end
+    add("Ask first from quality %d, %d items waiting. Gear remembered: %d, put on more than once: %d, keep rule %s.",
+        db.askQuality, #ns.GetAskedItems(), worn, swapped, db.keepWorn and "on" or "off")
     add("Outgrown food: %s. Best food you carry enough of: level %s. Best drink: level %s.",
         db.sellOldFood and "on" or "off", tostring(bestFood.food or "none"), tostring(bestFood.drink or "none"))
 
@@ -1064,11 +1242,14 @@ end
 -- Selling
 ------------------------------------------------------------------------
 
-local function GetSellable(bag, slot)
+-- The item in a bag slot and its stack's value if it sells now; with asked,
+-- only items that wait for your OK instead (see AsksFirst).
+local function GetSellable(bag, slot, asked)
     local info = C_Container.GetContainerItemInfo(bag, slot)
     if not info or not info.itemID or info.isLocked or info.hasNoValue then return end
 
-    if JunkReason(info, bag, slot) then
+    local reason = JunkReason(info, bag, slot)
+    if reason and AsksFirst(info, reason) == (asked or false) then
         local price = select(11, C_Item.GetItemInfo(info.itemID)) or 0
         if price > 0 then
             return info, price * (info.stackCount or 1)
@@ -1076,16 +1257,21 @@ local function GetSellable(bag, slot)
     end
 end
 
+-- Starts the "today" counters afresh on a new day.
+local function RollDay()
+    local today = date("%Y-%m-%d")
+    if charData.day ~= today then
+        charData.day = today
+        charData.today, charData.allToday = 0, 0
+        charData.repairsToday, charData.repairsGuildToday = 0, 0
+    end
+end
+
 -- Adds a sale to the earnings counters (negative for buybacks). Only
 -- Pocket Goblin's own sales count as junk earnings; all sales count towards
 -- the "all sales" totals.
 local function AddEarnings(copper, stacks, byGoblin)
-    local today = date("%Y-%m-%d")
-    if charData.day ~= today then
-        charData.day = today
-        charData.today = 0
-        charData.allToday = 0
-    end
+    RollDay()
     charData.allToday = charData.allToday + copper
     charData.allEarned = charData.allEarned + copper
     session.allEarned = session.allEarned + copper
@@ -1171,6 +1357,7 @@ function ns.CheckMilestones(quiet)
     for _, milestone in ipairs(ns.MILESTONES) do
         local reached = (milestone.sold and charData.sold >= milestone.sold)
             or (milestone.earned and charData.earned >= milestone.earned)
+            or (milestone.repaired and charData.repairs + charData.repairsGuild >= milestone.repaired)
         if reached and not charData.milestones[milestone.key] then
             charData.milestones[milestone.key] = true
             if not quiet and ns.GoblinVoice() then
@@ -1206,16 +1393,19 @@ local function StopSelling()
         if ns.UpdateMerchantPanel then ns.UpdateMerchantPanel() end
     end
     if sellSummary and sellSummary.count > 0 then
-        Print(ns.Say("sold", L["Sold %d item(s) for %s."], sellSummary.count, GetMoneyString(sellSummary.money, true)))
+        Summary(ns.Say("sold", L["Sold %d item(s) for %s."], sellSummary.count, GetMoneyString(sellSummary.money, true)))
         if sellSummary.leftOver > 0 then
-            Print(L["%d more junk items left. Press Sell junk to sell the next %d."], sellSummary.leftOver,
+            Summary(L["%d more junk items left. Press Sell junk to sell the next %d."], sellSummary.leftOver,
                 math.min(sellSummary.leftOver, BUYBACK_SIZE))
         end
     end
     sellSummary = nil
 end
 
-local function SellJunk(manual)
+-- Sells the junk in the bags. asked sells the items that wait for your OK
+-- instead (you just gave it), all of them, or only the one at onlyBag and
+-- onlySlot.
+local function SellJunk(manual, asked, onlyBag, onlySlot)
     if not merchantOpen then
         Print(L["Open a vendor window first."])
         return
@@ -1230,7 +1420,7 @@ local function SellJunk(manual)
     local queue = {}
     for bag = 0, LAST_BAG do
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
-            local info = GetSellable(bag, slot)
+            local info = (not onlyBag or (bag == onlyBag and slot == onlySlot)) and GetSellable(bag, slot, asked)
             if info then
                 queue[#queue + 1] = { bag = bag, slot = slot, itemID = info.itemID }
             end
@@ -1260,7 +1450,7 @@ local function SellJunk(manual)
             StopSelling()
             return
         end
-        local info, value = GetSellable(entry.bag, entry.slot)
+        local info, value = GetSellable(entry.bag, entry.slot, asked)
         if info and info.itemID == entry.itemID then
             C_Container.UseContainerItem(entry.bag, entry.slot)
             sellSummary.count = sellSummary.count + 1
@@ -1273,28 +1463,66 @@ local function SellJunk(manual)
 end
 ns.SellJunk = SellJunk
 
+-- Items that wait for your OK before they're sold:
+-- { { bag, slot, info, reason, value }, ... }, most valuable first.
+function ns.GetAskedItems()
+    local found = {}
+    for bag = 0, LAST_BAG do
+        for slot = 1, C_Container.GetContainerNumSlots(bag) do
+            local info, value = GetSellable(bag, slot, true)
+            if info then
+                found[#found + 1] = { bag = bag, slot = slot, info = info, value = value,
+                    reason = JunkReason(info, bag, slot) }
+            end
+        end
+    end
+    table.sort(found, function(a, b) return a.value > b.value end)
+    return found
+end
+
+-- With the vendor panel off, say in chat which items are waiting, once a visit.
+local function MentionAskedItems()
+    if db.merchantPanel then return end
+    local asked = ns.GetAskedItems()
+    if #asked == 0 then return end
+    local links = {}
+    for _, entry in ipairs(asked) do links[#links + 1] = entry.info.hyperlink end
+    Summary(L["Waiting for your OK, so not sold: %s. Turn on the vendor panel to sell them, or sell them yourself."],
+        table.concat(links, ", "))
+end
+
 function ns.GetHistory()
     return charData.history
 end
 
--- Copper earned: this session, today, by this character, and by all
--- characters; plus copper this character spent on repairs.
 -- Earnings as { session, today, character, account } tables of
--- { junk = Pocket Goblin's sales, all = every vendor sale }, plus copper this
--- character spent on repairs.
+-- { junk = Pocket Goblin's sales, all = every vendor sale, repairs = repairs
+-- paid from your gold, guildRepairs = repairs the guild paid }. character and
+-- account also have biggestRepair ({ cost, time, vendor }, or nil), and
+-- account the name of the character it belongs to (biggestRepairBy).
 function ns.GetEarnings()
     local isToday = charData.day == date("%Y-%m-%d")
-    local account = { junk = 0, all = 0 }
-    for _, character in pairs(PocketGoblinDB.characters) do
+    local account = { junk = 0, all = 0, repairs = 0, guildRepairs = 0 }
+    for key, character in pairs(PocketGoblinDB.characters) do
         account.junk = account.junk + (character.earned or 0)
         account.all = account.all + (character.allEarned or 0)
+        account.repairs = account.repairs + (character.repairs or 0)
+        account.guildRepairs = account.guildRepairs + (character.repairsGuild or 0)
+        local biggest = character.biggestRepair
+        if biggest and (not account.biggestRepair or biggest.cost > account.biggestRepair.cost) then
+            account.biggestRepair = biggest
+            account.biggestRepairBy = key:match("^(.-) %- ") or key
+        end
     end
     return {
-        session = { junk = session.earned, all = session.allEarned },
-        today = { junk = isToday and charData.today or 0, all = isToday and charData.allToday or 0 },
-        character = { junk = charData.earned, all = charData.allEarned },
+        session = { junk = session.earned, all = session.allEarned,
+            repairs = session.repairs, guildRepairs = session.repairsGuild },
+        today = { junk = isToday and charData.today or 0, all = isToday and charData.allToday or 0,
+            repairs = isToday and charData.repairsToday or 0, guildRepairs = isToday and charData.repairsGuildToday or 0 },
+        character = { junk = charData.earned, all = charData.allEarned,
+            repairs = charData.repairs, guildRepairs = charData.repairsGuild, biggestRepair = charData.biggestRepair },
         account = account,
-    }, charData.repairs, charData.repairsGuild
+    }
 end
 
 function ns.GetCurrentVisit()
@@ -1385,7 +1613,7 @@ local function OnBuyback(index)
         if matchedIndex == index then
             sold.boughtBack = true
             AddEarnings(-sold.value, -1, sold.source ~= "you")
-            Print(ns.Say("boughtBack", L["Bought back %s."], sold.link .. (sold.count > 1 and (" x" .. sold.count) or "")))
+            Summary(ns.Say("boughtBack", L["Bought back %s."], sold.link .. (sold.count > 1 and (" x" .. sold.count) or "")))
             break
         end
     end
@@ -1484,13 +1712,13 @@ local function AutoRepair()
         local bank = GetGuildBankMoney and GetGuildBankMoney() or 0
         if (withdraw == -1 or withdraw >= cost) and bank >= cost then
             RepairAllItems(true)
-            Print(ns.Say("repairedGuild", L["Repaired for %s from guild funds."], GetMoneyString(cost, true)))
+            Summary(ns.Say("repairedGuild", L["Repaired for %s from guild funds."], GetMoneyString(cost, true)))
             return
         end
     end
     if GetMoney() >= cost then
         RepairAllItems()
-        Print(ns.Say("repaired", L["Repaired for %s."], GetMoneyString(cost, true)))
+        Summary(ns.Say("repaired", L["Repaired for %s."], GetMoneyString(cost, true)))
     else
         Print(ns.Say("cantRepair", L["Not enough money to repair (%s needed)."], GetMoneyString(cost, true)))
     end
@@ -1516,15 +1744,70 @@ local function OnDurabilityChanged()
         local visit = CurrentVisit()
         visit.repairs = visit.repairs or {}
         table.insert(visit.repairs, { cost = spent, guild = guildRepairPending })
+        RollDay()
         if guildRepairPending then
             charData.repairsGuild = charData.repairsGuild + spent
+            charData.repairsGuildToday = charData.repairsGuildToday + spent
+            session.repairsGuild = session.repairsGuild + spent
         else
             charData.repairs = charData.repairs + spent
+            charData.repairsToday = charData.repairsToday + spent
+            session.repairs = session.repairs + spent
         end
+        ns.CheckMilestones()
         RefreshWindow()
     end
     guildRepairPending = false
     repairCost = cost
+end
+
+-- What a vendor visit's repairs cost, whoever paid.
+local function VisitRepairCost(visit)
+    local cost = 0
+    for _, repair in ipairs(visit.repairs or {}) do cost = cost + repair.cost end
+    return cost
+end
+
+-- The most expensive visit's repairs in the history, for characters that
+-- repaired before the record was kept.
+local function FindBiggestRepair()
+    for _, visit in ipairs(charData.history) do
+        local cost = VisitRepairCost(visit)
+        if cost > 0 and (not charData.biggestRepair or cost > charData.biggestRepair.cost) then
+            charData.biggestRepair = { cost = cost, time = visit.time, vendor = visit.vendor }
+        end
+    end
+end
+
+-- When a vendor visit with repairs ends: keeps the record for the most
+-- expensive repairs, and in its own voice the goblin groans about a bill
+-- three times the usual, and (once a day) about repairs costing more than
+-- the day's sales.
+local function ReviewRepairs(visit)
+    local bill = visit and VisitRepairCost(visit) or 0
+    if bill <= 0 then return end
+
+    local total, bills = 0, 0 -- earlier bills in the history, for the usual one
+    for _, earlier in ipairs(charData.history) do
+        local cost = earlier ~= visit and VisitRepairCost(earlier) or 0
+        if cost > 0 then total, bills = total + cost, bills + 1 end
+    end
+    local record = charData.biggestRepair
+    local isRecord = not record or bill > record.cost
+    if isRecord then
+        charData.biggestRepair = { cost = bill, time = visit.time, vendor = visit.vendor }
+    end
+    if not ns.GoblinVoice() then return end
+
+    if bills >= 5 and bill >= 3 * total / bills then
+        Print(ns.Say(isRecord and "repairRecord" or "repairBig", "%s", GetMoneyString(bill, true)))
+    end
+    RollDay()
+    if charData.repairsToday > charData.allToday and charData.ledgerDay ~= charData.day then
+        charData.ledgerDay = charData.day
+        Print(ns.Say("ledgerRed", "%s %s", GetMoneyString(charData.repairsToday, true),
+            charData.allToday > 0 and GetMoneyString(charData.allToday, true) or "0"))
+    end
 end
 
 ------------------------------------------------------------------------
@@ -1563,7 +1846,7 @@ function ns.ScanJunk(reasons)
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             local reason = info and info.itemID and JunkReason(info, bag, slot)
-            if reason and (not reasons or reasons[reason]) then
+            if reason and (not reasons or reasons[reason]) and not AsksFirst(info, reason) then
                 local price = select(11, C_Item.GetItemInfo(info.itemID)) or 0
                 found[#found + 1] = { info = info, reason = reason, value = price * (info.stackCount or 1) }
             end
@@ -1611,7 +1894,8 @@ function ns.FindCheapestJunk()
     for bag = 0, LAST_BAG do
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
             local info = C_Container.GetContainerItemInfo(bag, slot)
-            if info and info.itemID and not info.isLocked and JunkReason(info, bag, slot) then
+            local reason = info and info.itemID and not info.isLocked and JunkReason(info, bag, slot)
+            if reason and not AsksFirst(info, reason) then
                 local price = (not info.hasNoValue and select(11, C_Item.GetItemInfo(info.itemID))) or 0
                 local count = info.stackCount or 1
                 local value = price * count
@@ -1703,7 +1987,10 @@ local function AddTooltipLine(tooltip, data)
     local bag, slot = TooltipBagSlot(tooltip)
     local info = bag and C_Container.GetContainerItemInfo(bag, slot)
     local reason = info and info.itemID == data.id and JunkReason(info, bag, slot)
-    if reason and db.tooltipValue then
+    if reason and db.tooltipValue and AsksFirst(info, reason) then
+        tooltip:AddLine(L["Pocket Goblin: sells when you OK it at a vendor ("] .. REASONS[reason] .. ")",
+            ASK_COLOR[1], ASK_COLOR[2], ASK_COLOR[3], true)
+    elseif reason and db.tooltipValue then
         local price = select(11, C_Item.GetItemInfo(data.id)) or 0
         local count = info.stackCount or 1
         local value = price > 0 and GetMoneyString(price * count, true) or L["no value"]
@@ -1747,7 +2034,7 @@ local function ShowHelp()
     print(L["  /goblin - open the Pocket Goblin window"])
     print(L["  /goblin settings - open the settings"])
     print(L["  /goblin minimap - show or hide the minimap button"])
-    print(L["  /goblin chat [goblin|plain|off] - choose how the goblin talks in chat"])
+    print(L["  /goblin chat [goblin|plain|summaries|none] - choose how the goblin talks in chat"])
     print(L["  /goblin profile [name] - show or switch this character's profile"])
     print(L["  /goblin sell - sell now (vendor must be open)"])
     print(L["  /goblin sort - stack and sort your bags"])
@@ -1829,8 +2116,9 @@ SlashCmdList.POCKETGOBLIN = function(msg)
         RefreshWindow()
     elseif cmd == "chat" then
         -- Sets the given style, or moves on to the next one.
-        local order = { "goblin", "plain", "off" }
+        local order = { "goblin", "plain", "summaries", "none" }
         local style = arg:lower()
+        if style == "off" then style = "none" end
         if not tContains(order, style) then
             local current = 0
             for i, key in ipairs(order) do
@@ -1839,7 +2127,7 @@ SlashCmdList.POCKETGOBLIN = function(msg)
             style = order[current % #order + 1]
         end
         db.messages = style
-        Print(L["Chat messages: %s (sale summaries always show)"], ns.MessageStyleName(style))
+        Print(L["Chat messages: %s"], ns.MessageStyleName(style))
         RefreshWindow()
     elseif cmd == "profile" then
         if arg == "" then
@@ -1968,8 +2256,10 @@ local function UpgradeProfile(profile)
     end
     -- Chat, goblin voice and milestones became one "messages" setting.
     if profile.messages == nil and (profile.chat ~= nil or profile.goblinVoice ~= nil) then
-        profile.messages = (profile.chat == false and "off") or (profile.goblinVoice == false and "plain") or "goblin"
+        profile.messages = (profile.chat == false and "summaries") or (profile.goblinVoice == false and "plain") or "goblin"
     end
+    -- "Off" still showed summaries, so it's now called that ("none" is new).
+    if profile.messages == "off" then profile.messages = "summaries" end
     profile.chat, profile.goblinVoice, profile.milestones = nil, nil, nil
     -- "Gear your class can't use" and "outgrown gear" became one rule.
     if profile.sellSoulbound == nil and (profile.sellUnusable ~= nil or profile.sellOutgrown ~= nil) then
@@ -2198,7 +2488,7 @@ local function WarnOtherSellers()
         otherSellersWarned = false
         return
     end
-    if otherSellersWarned or db.merchantPanel then return end
+    if otherSellersWarned or db.merchantPanel or db.messages == "none" then return end
     otherSellersWarned = true
     C_Timer.After(1, function() -- after the sale messages
         for _, seller in ipairs(sellers) do
@@ -2216,6 +2506,8 @@ end
 -- Events
 ------------------------------------------------------------------------
 
+local knewDisenchant = false -- whether this character knew Disenchant at the last check
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
@@ -2226,6 +2518,10 @@ frame:RegisterEvent("UPDATE_INVENTORY_DURABILITY")
 frame:RegisterEvent("BAG_UPDATE_DELAYED")
 frame:RegisterEvent("GLOBAL_MOUSE_UP")
 frame:RegisterEvent("PLAYER_LEVEL_UP")
+frame:RegisterEvent("SPELLS_CHANGED")
+frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+frame:RegisterEvent("EQUIPMENT_SETS_CHANGED")
+frame:RegisterEvent("PLAYER_LOGOUT")
 
 frame:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
@@ -2242,6 +2538,12 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         local firstMilestoneCheck = charData.milestones == nil
         ApplyDefaults(charData, CHARACTER_DEFAULTS)
         if firstMilestoneCheck then ns.CheckMilestones(true) end
+        if not charData.repairMilestones then
+            -- Repair milestones came in 1.7: count what's already spent without cheering.
+            charData.repairMilestones = true
+            ns.CheckMilestones(true)
+            FindBiggestRepair()
+        end
     elseif event == "PLAYER_LOGIN" then
         HookContainerFrames()
         RegisterBaganatorPlugin()
@@ -2250,6 +2552,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         ns.SetupDestroyButtons()
         ns.SetupSortButton()
         ns.SetupOpenButtons()
+        RecordWorn()
         hooksecurefunc("BuybackItem", OnBuyback)
         hooksecurefunc("RepairAllItems", function(guildBank) guildRepairPending = guildBank and true or false end)
         if TooltipDataProcessor and Enum.TooltipDataType then
@@ -2267,12 +2570,14 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         RefreshOverlays()
         RefreshWindow()
         if db.autoSell then SellJunk(false) end
+        MentionAskedItems()
         WarnOtherSellers()
         ns.UpdateMerchantPanel()
     elseif event == "MERCHANT_CLOSED" then
         merchantOpen = false
         StopSelling()
         StopBuyingBack()
+        ReviewRepairs(currentVisit)
         currentVisit = nil
         wipe(pendingOwnSales)
         RefreshWindow()
@@ -2284,6 +2589,21 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         ns.UpdateMerchantPanel()
     elseif event == "UPDATE_INVENTORY_DURABILITY" then
         OnDurabilityChanged()
+    elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+        RecordWorn()
+        RefreshOverlays()
+    elseif event == "EQUIPMENT_SETS_CHANGED" then
+        setIcons = nil -- a set may have a new name or icon
+        RefreshOverlays()
+    elseif event == "PLAYER_LOGOUT" then
+        RecordWorn() -- so gear worn all session counts until now
+    elseif event == "SPELLS_CHANGED" then
+        -- Learning (or unlearning) Enchanting changes what the disenchant rule keeps.
+        local knows = KnowsDisenchant()
+        if knows ~= knewDisenchant then
+            knewDisenchant = knows
+            ns.OnRulesChanged()
+        end
     elseif event == "PLAYER_LEVEL_UP" then
         -- UnitLevel can lag behind the event, so check a moment later.
         -- (White gear and food rules depend on your level.)

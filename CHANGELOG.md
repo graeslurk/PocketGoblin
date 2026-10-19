@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.7.0
+
+New:
+- **Repair costs and net profit**: each earnings tile on the History page (this session, today, this character, all characters) now also shows what you spent on repairs and your **net**: everything you sold at vendors minus the repairs you paid yourself, in green or red. Hover a tile for the full breakdown, with what the guild paid for and your **most expensive repair** (for all characters, also whose it was)
+- The minimap button's tooltip shows today's repairs
+- With the goblin's voice on:
+  - **Repair milestones** at 1, 10, 50, 100, 500 and 1,000 gold spent on repairs. Repairs before this version count, without a cheer for the milestones you'd already passed
+  - The goblin **groans at big repair bills**, three times your usual one, and makes a fuss when it's a new record
+  - Once a day it grumbles when **repairs cost more than you've sold** that day
+- **No chat at all**: the chat messages setting has a new choice, **None**. Pocket Goblin then says nothing on its own, not even what it sold or repaired; the History page and the vendor panel still show every sale and repair. It still tells you when you can't afford repairs, and still answers your own commands and clicks
+- **Items to disenchant**: on a character with Enchanting, green, blue and purple weapons and armor are kept instead of sold or destroyed, so you can disenchant them, soulbound ones too. Their tooltip says "kept (for disenchanting)". A new switch under **Kept automatically** on the Junk rules page, on by default; it does nothing on characters without Enchanting
+- **Ask before selling**: items a junk rule picks (outgrown, unusable or lighter gear) of the quality you choose or better aren't sold on their own anymore. The vendor panel lists them under **Waiting for your OK**, with their value and why, and a **Sell** and **Keep** button each, plus **Sell all**. In your bags they get a coin with a question mark, and the trash can and Make room leave them alone. Choose Green and better, Blue and better (the default) or Epic only at the top of the Junk rules page. Items on your auto-sell list never ask
+- **Epics**: the soulbound gear rules can now pick epics too, which always wait for your OK
+- **Gear you swap to**: green or better gear you've put on more than once in the last 30 days is kept, like a resistance set or a swap weapon you use without an equipment set. Gear you wore once and replaced, like while levelling, can still be sold. Under **Kept automatically**, on by default. It starts counting from this version
+- **Equipment set icon**: items in one of your equipment sets show that set's icon from the Equipment Manager in the coin's corner, so you can see which set they belong to and why they're never sold. Turn it off on the Bags page
+
+Changed:
+- The repairs total next to "Recent visits" is gone; it's in the earnings tiles now
+- The chat setting's **Off** is now called **Summaries only**, since it always showed what was sold, repaired and bought back. Your choice is kept. `/goblin chat off` now picks None
+
 ## 1.6.0
 
 New:

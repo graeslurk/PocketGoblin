@@ -37,6 +37,10 @@ local function ShowTooltip(self)
         nil, nil, nil, 1, 1, 1)
     GameTooltip:AddDoubleLine(L["Junk sold today"], GetMoneyString(math.max(earnings.today.junk, 0), true),
         nil, nil, nil, 1, 1, 1)
+    if earnings.today.repairs > 0 then
+        GameTooltip:AddDoubleLine(L["Repairs today"], GetMoneyString(earnings.today.repairs, true),
+            nil, nil, nil, 0.9, 0.55, 0.5)
+    end
 
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(L["|cff00ff00Left-click|r to open the auto-sell list"], 0.8, 0.8, 0.8)

@@ -94,6 +94,30 @@ def render(name, width, height, sdf, color=(255, 255, 255)):
         f.write(header + pixels)
 
 
+def render_layers(name, size, layers, grid=32):
+    """Full-colour texture (not tinted in-game): layers are (sdf, (r, g, b)),
+    bottom first, drawn on a grid-unit canvas and scaled to size pixels."""
+    scale = size / grid
+    pixels = bytearray()
+    for y in range(size):
+        for x in range(size):
+            px, py = (x + 0.5) / scale, (y + 0.5) / scale
+            r = g = b = a = 0.0
+            for sdf, color in layers:
+                cover = max(0.0, min(1.0, 0.5 - sdf(px, py) * scale))
+                # "over" compositing, premultiplied
+                r = color[0] * cover + r * (1 - cover)
+                g = color[1] * cover + g * (1 - cover)
+                b = color[2] * cover + b * (1 - cover)
+                a = cover + a * (1 - cover)
+            if a > 0:
+                r, g, b = r / a, g / a, b / a
+            pixels += bytes((round(b), round(g), round(r), round(a * 255)))  # BGRA
+    header = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, size, size, 32, 0x28)
+    with open(os.path.join(OUT, name + ".tga"), "wb") as f:
+        f.write(header + pixels)
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
 
@@ -163,6 +187,23 @@ def main():
         keyhole = min(circle(x, y, 16, 20, 1.8), capsule(x, y, 16, 20, 16, 24, 0.9))
         return min(shackle, max(body, -keyhole))
     render("icon-lock", 32, 32, lock)
+
+    # Gold coin with a dark "?", for items that wait for your OK. In colour,
+    # so the "?" stays readable on any item icon at bag-icon size.
+    def question(x, y):
+        hook = ring(x, y, 16, 11.5, 5.5, 4)
+        hook = max(hook, -max(11.5 - y, (x - 16) - (y - 11.5)))  # open on the lower left
+        stem = min(capsule(x, y, 19.9, 15.4, 16, 18.2, 2), capsule(x, y, 16, 18.2, 16, 19.6, 2))
+        return min(hook, stem, circle(x, y, 16, 25, 2.5))
+    # Drawn on a 32 grid, then padded to 44 so the coin fills about 73% of
+    # the texture, like the game's junk coin (bags-junkcoin) it sits beside.
+    def padded(sdf):
+        return lambda x, y: sdf(x - 6, y - 6)
+    render_layers("icon-ask", 64, [
+        (padded(lambda x, y: circle(x, y, 16, 16, 15.5)), (70, 45, 8)),     # dark rim
+        (padded(lambda x, y: circle(x, y, 16, 16, 13.8)), (250, 196, 58)),  # gold face
+        (padded(question), (55, 32, 4)),
+    ], grid=44)
 
     def funnel(x, y):  # filter funnel, for the junk rules page
         top = tapered_box(x, y, 16, 7, 17, 11.5, 3, 1.2)

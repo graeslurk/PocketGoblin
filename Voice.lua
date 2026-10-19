@@ -46,6 +46,24 @@ local LINES = {
         L["%s on the guild tab. Shh, nobody's watching."],
         L["The guild bank just covered %s in repairs. Bless 'em."],
     },
+    -- money
+    repairBig = {
+        L["%s?! That's three times your usual repair bill. Did you lose a fight with a wall?"],
+        L["Ouch. %s in repairs. My pocket felt that one."],
+        L["%s for repairs. Maybe try standing out of the fire, boss."],
+        L["%s to patch you up. What did you fight, a mountain?"],
+    },
+    repairRecord = {
+        L["%s! Your priciest repair yet. The blacksmith is buying a new anvil."],
+        L["New record: %s in repairs. I'm framing the receipt."],
+        L["%s for repairs, a personal worst. I need to sit down."],
+    },
+    -- repairs today, sales today
+    ledgerRed = {
+        L["The ledger's red today, boss: %s on repairs, only %s from sales. Go find junk!"],
+        L["Repairs %s, sales %s. We're losing money today! Fetch me some loot."],
+        L["The ledger's bleeding: %s spent fixing things, %s earned. Not my best day."],
+    },
     cantRepair = {
         L["Repairs cost %s and you can't afford it. Sell more junk, boss!"],
         L["We're %s short of fixing your gear. Embarrassing."],
@@ -100,7 +118,8 @@ end
 ------------------------------------------------------------------------
 
 -- Checked against the character's lifetime numbers (sold = item stacks,
--- earned = copper, both from the goblin's own sales).
+-- earned = copper, both from the goblin's own sales; repaired = copper spent
+-- on repairs, also by the guild).
 ns.MILESTONES = {
     { key = "firstSale", sold = 1, text = L["Your goblin made its first sale. The start of an empire!"] },
     { key = "sold50", sold = 50, text = L["50 sales. The goblin has started keeping a ledger."] },
@@ -115,6 +134,13 @@ ns.MILESTONES = {
     { key = "gold100", earned = 1000000, text = L["100 gold from junk. Trade Princes are taking notice."] },
     { key = "gold1000", earned = 10000000,
         text = L["1,000 gold from junk! The goblin has retired to a private island. (It's still in your pocket.)"] },
+    { key = "repair1", repaired = 10000, text = L["1 gold spent on repairs. The goblin has opened a tab with the blacksmith."] },
+    { key = "repair10", repaired = 100000, text = L["10 gold on repairs. The blacksmith sends you a holiday card."] },
+    { key = "repair50", repaired = 500000, text = L["50 gold on repairs. The blacksmith named an anvil after you."] },
+    { key = "repair100", repaired = 1000000, text = L["100 gold on repairs! The goblin suggests learning to dodge."] },
+    { key = "repair500", repaired = 5000000, text = L["500 gold on repairs. The blacksmith retired on your money."] },
+    { key = "repair1000", repaired = 10000000,
+        text = L["1,000 gold on repairs! The goblin is writing a strongly worded letter to whatever keeps hitting you."] },
 }
 
 ------------------------------------------------------------------------

@@ -199,6 +199,13 @@ def main():
     # the texture, like the game's junk coin (bags-junkcoin) it sits beside.
     def padded(sdf):
         return lambda x, y: sdf(x - 6, y - 6)
+    # Green arrow pointing up, for upgrades, padded like the "?" coin.
+    arrow_points = [(16, 3), (28.5, 15.5), (21, 15.5), (21, 28.5), (11, 28.5), (11, 15.5), (3.5, 15.5)]
+    render_layers("icon-upgrade", 64, [
+        (padded(lambda x, y: polygon(x, y, arrow_points) - 1.6), (10, 40, 8)),     # dark outline
+        (padded(lambda x, y: polygon(x, y, arrow_points)), (70, 220, 60)),          # green
+    ], grid=44)
+
     render_layers("icon-ask", 64, [
         (padded(lambda x, y: circle(x, y, 16, 16, 15.5)), (70, 45, 8)),     # dark rim
         (padded(lambda x, y: circle(x, y, 16, 16, 13.8)), (250, 196, 58)),  # gold face

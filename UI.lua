@@ -49,14 +49,15 @@ local PAGES = {
     { key = "keep", title = L["Keep list"], subtitle = L["Kept items & quest gear"], icon = "icon-lock" },
     { key = "history", title = L["History"], subtitle = L["Sales & earnings"], icon = "icon-history" },
     { section = "SETTINGS" },
-    { key = "general", title = L["General"], subtitle = L["Interface, chat & profiles"], icon = "icon-gear" },
+    { key = "general", title = L["General"], subtitle = L["Interface & chat"], icon = "icon-gear" },
     { key = "rules", title = L["Junk rules"], subtitle = L["What gets sold"], icon = "icon-filter" },
     { key = "vendor", title = L["Vendor"], subtitle = L["Selling & repairs"], icon = "icon-coin" },
     { key = "bags", title = L["Bags"], subtitle = L["Icons, destroy & space"], icon = "icon-bag" },
+    { key = "profiles", title = L["Profiles"], subtitle = L["Switch, copy & share"], icon = "icon-profile" },
     { key = "about", title = L["About"], subtitle = L["How it works & commands"], icon = "icon-info" },
 }
 -- Old page keys that now live on another page: { page, keep list tab }.
-local PAGE_ALIASES = { quest = { "keep", "quest" }, destroy = { "bags" }, profiles = { "general" } }
+local PAGE_ALIASES = { quest = { "keep", "quest" }, destroy = { "bags" } }
 local NAV_HEIGHT, NAV_SPACING, SECTION_HEIGHT = 44, 46, 24
 
 local window
@@ -611,6 +612,7 @@ local function CreateTextInput(parent, width, placeholderText)
     box:SetScript("OnTextChanged", function(self) placeholder:SetShown(self:GetText() == "") end)
     return box
 end
+ns.UI.CreateTextInput = CreateTextInput
 
 -- Button for destructive actions: the first click asks "Click to confirm",
 -- a second click within a few seconds runs onConfirm.
@@ -1887,7 +1889,8 @@ local function BuildRulesPage(page)
         AddRow(card, L["Quest gear"], L["Weapons and armor that quests ask for, listed on the Keep list page."],
             SettingToggle("skipQuestGear", ns.OnRulesChanged))
         AddRow(card, L["Upgrades"],
-            L["Gear better than what you wear in its slot, or that would fill an empty one. Never destroyed either."],
+            L["Gear better than what you wear, by Pawn if you have it, otherwise by item level. Never destroyed "
+                .. "either."],
             SettingToggle("protectUpgrades", ns.OnRulesChanged))
         AddRow(card, L["Gear you swap to"],
             L["Green or better gear you've put on more than once in the last 30 days, like a resistance set or a "
@@ -1939,7 +1942,7 @@ local function BuildRulesPage(page)
             SettingToggle("sellWhiteGear", ns.OnRulesChanged))
         local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 60
         AddDependentRow(card, "sellWhiteGear", L["From level"],
-            L["Below this level, white gear is left alone."],
+            L["Below this level, only white gear your class can never use, like plate on a mage, is sold."],
             function(parent)
                 return CreateSlider(parent, 1, math.max(maxLevel, 10), 1, function() return ns.db.whiteGearLevel end,
                     function(value) return ("%d"):format(value + 0.5) end,
@@ -2052,6 +2055,10 @@ local function BuildBagsPage(page)
             L["Show the set's icon from the Equipment Manager on items in one of your equipment sets, which are "
                 .. "never sold."],
             SettingToggle("setIcon", ns.OnRulesChanged))
+        AddRow(card, L["Upgrade arrow"],
+            L["Pocket Goblin's own arrow on gear Pawn says is an upgrade, for when Pawn's bag arrows are off. "
+                .. "Needs Pawn."],
+            SettingToggle("upgradeIcon", ns.OnRulesChanged))
         AddRow(card, L["Icon size"], L["Size of the coin, lock and other icons."],
             function(parent)
                 return CreateSlider(parent, 0.5, 2, 0.1, function() return ns.db.iconScale end,
@@ -2061,7 +2068,9 @@ local function BuildBagsPage(page)
                         ns.RefreshOverlays()
                     end)
             end)
-        AddRow(card, L["Icon position"], L["Which corner of the item the icons sit in."],
+        AddRow(card, L["Icon position"],
+            L["Which corner of the item the icons sit in. Each item shows one: the coin, then the lock, then the set "
+                .. "icon, then the upgrade arrow."],
             function(parent)
                 return CreateCornerPicker(parent,
                     function() return ns.db.iconCorner end,
@@ -2635,6 +2644,29 @@ local function AddProfileCards(addCard)
                 return DropdownWithButton(parent, dropdown, delete)
             end)
         finish()
+
+        card, finish = addCard(L["Share"])
+        AddRow(card, L["Export"],
+            L["Copy your lists, or this whole profile, as text to use on another account or give to a friend."],
+            function(parent)
+                local holder = CreateFrame("Frame", nil, parent)
+                holder:SetSize(236, 32)
+                local profile = CreateButton(holder, L["Whole profile"], 124)
+                profile:SetPoint("RIGHT")
+                profile:SetScript("OnClick", function() ns.ShowExport("profile") end)
+                local lists = CreateButton(holder, L["Lists"], 104)
+                lists:SetPoint("RIGHT", profile, "LEFT", -8, 0)
+                lists:SetScript("OnClick", function() ns.ShowExport("lists") end)
+                return holder
+            end)
+        AddRow(card, L["Import"],
+            L["Paste a text from Pocket Goblin. Lists are added to yours; a whole profile becomes a new profile."],
+            function(parent)
+                local import = CreateButton(parent, L["Import..."], 124, true)
+                import:SetScript("OnClick", ns.ShowImportWindow)
+                return import
+            end)
+        finish()
     end
 end
 
@@ -2675,8 +2707,6 @@ local function BuildGeneralPage(page)
             { MESSAGE_NOTES.goblin, MESSAGE_NOTES.plain, MESSAGE_NOTES.summaries, MESSAGE_NOTES.none })
         showNote()
         finish()
-
-        AddProfileCards(addCard)
     end)
 end
 
@@ -2733,6 +2763,7 @@ local BUILDERS = {
     rules = BuildRulesPage,
     vendor = BuildVendorPage,
     bags = BuildBagsPage,
+    profiles = function(page) CreateCardPage(page, AddProfileCards) end,
     history = BuildHistoryPage,
     about = BuildAboutPage,
 }
@@ -3159,9 +3190,10 @@ local function CreateCopyWindow()
     close:SetScript("OnLeave", function() SetColor(closeIcon, C.muted) end)
     close:SetScript("OnClick", function() copyWindow:Hide() end)
 
-    local hint = Text(copyWindow, 12, C.muted)
-    hint:SetPoint("TOPLEFT", 16, -46)
-    hint:SetText(L["The text is selected: press Ctrl+C to copy it, then paste it into your bug report."])
+    copyWindow.hint = Text(copyWindow, 12, C.muted)
+    copyWindow.hint:SetPoint("TOPLEFT", 16, -46)
+    copyWindow.hint:SetPoint("RIGHT", -16, 0)
+    copyWindow.hint:SetJustifyH("LEFT")
 
     local area = CreateFrame("Frame", nil, copyWindow)
     area:SetPoint("TOPLEFT", 12, -70)
@@ -3200,10 +3232,13 @@ local function CreateCopyWindow()
     copyWindow.box = box
 end
 
--- Shows text in a window, selected for copying.
-function ns.ShowCopyWindow(title, text)
+-- Shows text in a window, selected for copying, with a line saying what to
+-- do with it (by default: paste it into a bug report).
+function ns.ShowCopyWindow(title, text, hint)
     if not copyWindow then CreateCopyWindow() end
     copyWindow.title:SetText(title)
+    copyWindow.hint:SetText(hint
+        or L["The text is selected: press Ctrl+C to copy it, then paste it into your bug report."])
     copyWindow.text = text
     copyWindow:Show()
     copyWindow.box:SetText(text)

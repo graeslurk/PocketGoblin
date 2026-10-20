@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.8.0
+
+New:
+- **Share your lists or your whole profile**: the new **Share** card on the Profiles page exports your auto-sell and keep lists (with your keep words and item types), or the whole profile with all its settings, as a text to copy. Paste it on another account, or give it to a friend. **Import** shows what a pasted text holds before anything changes: lists are added to yours (nothing of yours is removed, and items you've already listed stay as they are), and a whole profile becomes a new profile that this character switches to. Your minimap button position, auto-sell suggestions and list filters aren't part of a shared profile. A text that's cut short or changed is caught and nothing is imported
+- **Upgrade arrow** (needs **Pawn**): a green arrow on gear in your bags that Pawn says is better than what you wear, by the scales you use in Pawn, in the same corner as the coin (each item shows one icon: the coin, then the lock, then the equipment set icon, then the arrow, so gear you've set aside on purpose keeps its own icon). Gear you're too low a level for gets no arrow yet. If Pawn's own bag arrows are on, Pocket Goblin leaves the default bags to them. Also a Baganator corner icon. Turn it off on the Bags page, for example if Naowh Forever's bag marks already show upgrades
+- **Grey gear Pawn calls an upgrade** is no longer sold or destroyed as junk: it's kept like any other upgrade. Without Pawn, grey gear is still junk
+- With the coin icons on, the game's own coin on grey items is hidden everywhere, so a grey Pocket Goblin keeps doesn't look like junk
+- The **Upgrades** keep rule uses Pawn too when it's installed, and judges each item by its own stats ("of the Bear" and "of the Eagle" copies can differ). Without Pawn it goes by item level, as before
+
+Changed:
+- **Profiles have their own page** again, at the bottom of the settings: switching, creating, copying, sharing and deleting profiles. General now holds only the interface and chat settings
+- **White weapons and armor your class can never use**, like plate on a mage, are now sold from level 1 when "Sell white weapons and armor" is on. Before the level you set (10 by default), white gear you can use is still kept, as before
+
 ## 1.7.0
 
 New:

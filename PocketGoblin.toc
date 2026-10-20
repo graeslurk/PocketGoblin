@@ -8,7 +8,7 @@
 ## Category: Bags & Inventory
 ## IconTexture: Interface\AddOns\PocketGoblin\Media\icon
 ## SavedVariables: PocketGoblinDB
-## OptionalDeps: Baganator
+## OptionalDeps: Baganator, Pawn
 ## AddonCompartmentFunc: PocketGoblin_OnAddonCompartmentClick
 
 Locales/Locales.lua
@@ -17,6 +17,7 @@ QuestGear.lua
 Voice.lua
 PocketGoblin.lua
 UI.lua
+Share.lua
 Minimap.lua
 DestroyButton.lua
 OpenButton.lua

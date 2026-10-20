@@ -13,7 +13,6 @@ local JUNK_ATLAS = "bags-junkcoin"
 local COIN_SIZE = 17 -- at 100% icon scale
 local COMMON = Enum.ItemQuality and Enum.ItemQuality.Common or 1
 local UNCOMMON = Enum.ItemQuality and Enum.ItemQuality.Uncommon or 2
-local RARE = Enum.ItemQuality and Enum.ItemQuality.Rare or 3
 local EPIC = Enum.ItemQuality and Enum.ItemQuality.Epic or 4
 local DISENCHANT = 13262 -- the enchanter's Disenchant spell
 local MAX_HISTORY = 30 -- vendor visits kept per character
@@ -34,12 +33,19 @@ local NEVER_SELL_TOOLS = {
 }
 local COSMETIC_SLOTS = { INVTYPE_BODY = true, INVTYPE_TABARD = true }
 
+-- Armor types by item subclass ID (MISC: rings, necks, trinkets).
+local MISC, CLOTH, LEATHER, MAIL, PLATE = 0, 1, 2, 3, 4
+
 -- Weapon and armor types each class can ever use (Classic rules), by item
--- subclass ID. Used to sell soulbound gear the character can't use.
+-- subclass ID. Used to sell gear the character can't use. The other type
+-- names are only needed here, so they live in this block (a Lua file can
+-- only have 200 top-level locals).
+local CLASS_GEAR
+do
 local AXE1H, AXE2H, BOW, GUN, MACE1H, MACE2H, POLEARM, SWORD1H, SWORD2H = 0, 1, 2, 3, 4, 5, 6, 7, 8
-local STAFF, FIST, DAGGER, THROWN, CROSSBOW, WAND = 10, 13, 15, 16, 18, 19
-local MISC, CLOTH, LEATHER, MAIL, PLATE, SHIELD, LIBRAM, IDOL, TOTEM = 0, 1, 2, 3, 4, 6, 7, 8, 9
-local CLASS_GEAR = {
+local STAFF, FIST, DAGGER, CROSSBOW, WAND = 10, 13, 15, 18, 19
+local SHIELD, LIBRAM, IDOL, TOTEM = 6, 7, 8, 9
+CLASS_GEAR = {
     WARRIOR = {
         weapons = { AXE1H, AXE2H, BOW, GUN, MACE1H, MACE2H, POLEARM, SWORD1H, SWORD2H, STAFF, FIST, DAGGER, THROWN, CROSSBOW },
         armor = { CLOTH, LEATHER, MAIL, PLATE, SHIELD },
@@ -65,10 +71,12 @@ local CLASS_GEAR = {
     WARLOCK = { weapons = { SWORD1H, STAFF, DAGGER, WAND }, armor = { CLOTH } },
     DRUID = { weapons = { MACE1H, MACE2H, STAFF, FIST, DAGGER }, armor = { CLOTH, LEATHER, IDOL } },
 }
+end
 local FALLBACK_ICON = "Interface\\Buttons\\UI-GroupLoot-Coin-Up"
 local LOCK_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\icon-lock"
 local LOCK_COLOR = { 0.55, 0.8, 1 }
 local ASK_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\icon-ask"
+local UPGRADE_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\icon-upgrade"
 local ASK_COLOR = { 1, 0.82, 0.25 }
 local SET_FALLBACK_ICON = 134400 -- the question mark the Equipment Manager gives sets without an icon
 local WORN_DAYS = 30 -- gear swapped to this recently is kept (the keepWorn rule)
@@ -126,6 +134,7 @@ local defaults = {
     auctionProfit = 1000, -- ...this much copper more there than at a vendor (10 silver), after the house's cut
     keepIcon = true,  -- lock icon on items on the keep list
     setIcon = true,   -- the set's icon on items in an equipment set
+    upgradeIcon = true, -- green arrow on gear Pawn calls an upgrade (needs Pawn)
     addedAt = {},     -- [itemID] = time() it was added to the auto-sell list
     manualSales = {},  -- [itemID] = times you sold it yourself (for auto-sell suggestions)
     noSuggest = {},    -- [itemID] = true: never suggest auto-selling it again
@@ -306,12 +315,13 @@ local function RecordWorn()
     end
 end
 
--- Which keep rule protects an item: "name" (plus the matching word),
+-- Which keep rule protects an item (link: the exact item, for random stats
+-- like "of the Bear"): "name" (plus the matching word),
 -- "type", "valuable", "upgrade", "swapped", "disenchant" or "auction"; nil if
 -- none does. bound: the
 -- item in your bags is soulbound (so it can't be auctioned). Items you flag
 -- yourself ignore these rules.
-local function KeepRule(itemID, bound)
+local function KeepRule(itemID, bound, link)
     if #db.keepWords > 0 then
         local name = C_Item.GetItemInfo(itemID)
         if name then
@@ -327,7 +337,7 @@ local function KeepRule(itemID, bound)
         local price = select(11, C_Item.GetItemInfo(itemID)) or 0
         if price > db.keepValueLimit then return "valuable" end
     end
-    if db.protectUpgrades and IsUpgrade(itemID) then return "upgrade" end
+    if db.protectUpgrades and IsUpgrade(itemID, link) then return "upgrade" end
     if db.keepWorn and SwappedTo(itemID) then return "swapped" end
     if db.keepDisenchant and CanDisenchant(itemID) then return "disenchant" end
     if WorthAuctioning(itemID, bound) then return "auction" end
@@ -434,20 +444,107 @@ local function EquippedLevel(slot)
     return link and ItemLevel(link) or 0
 end
 
--- True for gear that's better than what you wear in its slot (a higher
--- item level than the weaker of its slots), or would fill an empty one.
--- Not grey items, gear your class can't use, or armor lighter than yours.
-function IsUpgrade(itemID)
-    local _, _, quality, _, _, _, _, _, equipLoc = C_Item.GetItemInfo(itemID)
+-- Pawn can only answer once it has set itself up at login (asking earlier
+-- makes it complain), and it keeps that to itself, so watch its setup
+-- function. Pawn loads first (OptionalDeps in the TOC), so the hook is in
+-- place before login.
+local pawnReady = false
+if type(PawnInitialize) == "function" then
+    hooksecurefunc("PawnInitialize", function()
+        pawnReady = true
+        if ns.ForgetUpgradeArrows then ns.ForgetUpgradeArrows() end
+        if db then ns.OnRulesChanged() end -- upgrades may keep different items now
+    end)
+end
+
+local function PawnReady()
+    return pawnReady and PawnShouldItemLinkHaveUpgradeArrowUnbudgeted ~= nil
+end
+
+-- Pawn's answer to "is this an upgrade?", by the scales you use in Pawn; nil
+-- when Pawn isn't ready or can't tell yet. Pawn rations its answers to keep
+-- the frame rate up and says "not sure yet" past the ration; budgeted takes
+-- that (fine for the arrows, which ask again), the keep rule asks for a
+-- definite answer, since it decides what's sold.
+local function PawnUpgrade(link, checkLevel, budgeted)
+    if not PawnReady() then return nil end
+    local ask = budgeted and PawnShouldItemLinkHaveUpgradeArrow or PawnShouldItemLinkHaveUpgradeArrowUnbudgeted
+    local ok, upgrade = pcall(ask, link, checkLevel)
+    if not ok or upgrade == nil then return nil end
+    return upgrade and true or false
+end
+
+-- Where upgrade answers come from, for the settings and debug info.
+function ns.UpgradeSource()
+    return PawnReady() and "Pawn" or "item level"
+end
+
+-- True if Pawn's own upgrade arrows are on in the default bags.
+local function PawnShowsBagArrows()
+    return PawnCommon ~= nil and PawnCommon.ShowBagUpgradeAdvisor == true
+end
+
+-- Pawn's answers for the arrows, by item link: Pawn rations its answers,
+-- so asking again on every bag update made arrows blink. When Pawn says its
+-- answers changed (new scales, new gear) or your gear or level changes, they
+-- go out of date: each is asked again, and shown as it was until the new
+-- answer comes, so arrows don't flash off in between.
+local arrowAnswers = {} -- [link] = { upgrade = Pawn's answer, round = arrowRound when asked }
+local arrowRound = 1
+function ns.ForgetUpgradeArrows()
+    arrowRound = arrowRound + 1
+end
+if type(PawnResetBags) == "function" then
+    hooksecurefunc("PawnResetBags", function()
+        ns.ForgetUpgradeArrows()
+        if db then ns.RefreshOverlays() end
+    end)
+end
+
+-- True if the item gets the upgrade arrow: only when Pawn says it's an
+-- upgrade you can wear now. Item level alone would put arrows on gear with
+-- the wrong stats (an intellect item on a rogue), so without Pawn there are
+-- none. When Pawn can't tell yet, the bags are checked again a moment later.
+local arrowRetry = false
+local function ShowsUpgradeArrow(link)
+    if not (link and db.upgradeIcon) then return false end
+    local known = arrowAnswers[link]
+    if known and known.round == arrowRound then return known.upgrade end
+    local upgrade = PawnUpgrade(link, true, true)
+    if upgrade ~= nil then
+        arrowAnswers[link] = { upgrade = upgrade, round = arrowRound }
+        return upgrade
+    end
+    if PawnReady() and not arrowRetry then
+        arrowRetry = true
+        C_Timer.After(0.25, function()
+            arrowRetry = false
+            ns.RefreshOverlays()
+        end)
+    end
+    return known ~= nil and known.upgrade -- the old answer until the new one comes
+end
+
+-- True for gear that's better than what you wear, also gear you'll grow
+-- into. With Pawn installed, Pawn decides, for grey gear too (so a grey item
+-- Pawn shows as an upgrade isn't sold). Otherwise a higher item level than
+-- the weaker of its slots, or filling an empty one; never grey items, gear
+-- your class can't use, or armor lighter than yours. link is the exact item
+-- when known (random stats like "of the Bear" differ per copy).
+function IsUpgrade(itemID, link)
+    local _, _, quality, _, _, _, _, _, equipLoc = C_Item.GetItemInfo(link or itemID)
     local slots = SLOTS_FOR[equipLoc or ""]
-    if not slots or not quality or quality == POOR then return false end
+    if not slots or not quality then return false end
+    local pawn = PawnUpgrade(link or ("item:" .. itemID), false)
+    if pawn ~= nil then return pawn end
+    if quality == POOR then return false end
     local _, _, _, _, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
     if not CanClassUse(classID, subClassID) then return false end
     if classID == ARMOR and subClassID >= CLOTH and subClassID <= PLATE and equipLoc ~= "INVTYPE_CLOAK" then
         local heaviest = HeaviestArmor()
         if heaviest and subClassID < heaviest then return false end
     end
-    local level = ItemLevel(itemID)
+    local level = ItemLevel(link or itemID)
     if not level then return false end
     local weakest
     for _, slot in ipairs(slots) do
@@ -620,9 +717,11 @@ local function RuleReason(info, bag, slot)
     local isGear = (classID == WEAPON or classID == ARMOR) and equipLoc ~= nil and equipLoc ~= ""
         and not COSMETIC_SLOTS[equipLoc]
 
-    if quality == COMMON and db.sellWhiteGear and UnitLevel("player") >= db.whiteGearLevel
-        and IsWhiteGear(itemID) then
-        return "whiteGear"
+    -- White gear from the level you choose; below it, only what your class
+    -- can never use (plate on a mage), since you might still wear the rest.
+    if quality == COMMON and db.sellWhiteGear and IsWhiteGear(itemID) then
+        if UnitLevel("player") >= db.whiteGearLevel then return "whiteGear" end
+        if not CanClassUse(classID, subClassID) then return "unusable" end
     end
 
     local foodKind = FoodKind(itemID)
@@ -675,7 +774,7 @@ local function JunkReason(info, bag, slot, ignoreKeepRules)
     end
     if InEquipmentSet(bag, slot) then return nil end
     local reason = RuleReason(info, bag, slot)
-    if reason and not ignoreKeepRules and KeepRule(itemID, info.isBound) then return nil end
+    if reason and not ignoreKeepRules and KeepRule(itemID, info.isBound, info.hyperlink) then return nil end
     return reason
 end
 ns.JunkReason = JunkReason
@@ -738,8 +837,10 @@ local function SetCoin(button, show)
         coin:SetPoint(db.iconCorner, 0, 0)
         coin:SetShown(show)
     end
-    -- Blizzard shows its own coin on greys at vendors; ours replaces it.
-    if show and button.JunkIcon then
+    -- The game puts its own coin (the same picture) on every grey item. With
+    -- our icons on, our rules decide instead, so a grey that's kept (like an
+    -- upgrade) shows no coin at all.
+    if db.showIcons and button.JunkIcon then
         button.JunkIcon:Hide()
     end
 end
@@ -784,6 +885,23 @@ local function SetLock(button, show)
 end
 
 -- A coin with a "?" in the coin's corner, for items that wait for your OK.
+-- A green arrow on gear that's an upgrade, in the coin's corner.
+local function SetUpgrade(button, show)
+    local arrow = button.PocketGoblinUpgrade
+    if show and not arrow then
+        arrow = button:CreateTexture(nil, "OVERLAY", nil, 7)
+        arrow:SetTexture(UPGRADE_ICON) -- in colour, not tinted
+        button.PocketGoblinUpgrade = arrow
+    end
+    if arrow then
+        local size = COIN_SIZE * db.iconScale
+        arrow:SetSize(size, size)
+        arrow:ClearAllPoints()
+        arrow:SetPoint(db.iconCorner, 0, 0)
+        arrow:SetShown(show)
+    end
+end
+
 local function SetAsk(button, show)
     local icon = button.PocketGoblinAsk
     if show and not icon then
@@ -858,10 +976,19 @@ local function UpdateButtonOverlay(button)
     local junk = reason and not asks
     local kept = info ~= nil and db.keepIcon and db.items[info.itemID] == false
 
-    SetCoin(button, junk and db.showIcons)
-    SetLock(button, kept)
-    SetAsk(button, asks and db.showIcons)
+    -- One icon per item, all in the same corner, in this order: what happens
+    -- at the vendor (coin, or "?" coin), then gear you've set aside on purpose
+    -- (lock, then equipment set), then the upgrade arrow for the rest.
+    local coin, ask = junk and db.showIcons, asks and db.showIcons
     local sets = info ~= nil and db.setIcon and not kept and EquipmentSets(bag, slot)
+    -- No arrow of ours when Pawn draws its own in these bags, or the game's shows.
+    local otherArrow = PawnShowsBagArrows() or (button.UpgradeIcon and button.UpgradeIcon:IsShown())
+    local upgrade = info ~= nil and not (coin or ask or kept or sets or otherArrow) and ShowsUpgradeArrow(info.hyperlink)
+    local lock = kept
+    SetCoin(button, coin)
+    SetAsk(button, ask)
+    SetUpgrade(button, upgrade)
+    SetLock(button, lock)
     SetSetIcon(button, sets and SetIconFor(sets) or nil)
     SetGreyedOut(button, junk and db.greyOut, info ~= nil and info.isLocked or false)
 end
@@ -972,6 +1099,18 @@ local function RegisterBaganatorPlugin()
                 return corner
             end,
             { corner = "top_left", priority = 1 })
+        Baganator.API.RegisterCornerWidget(L["Pocket Goblin: upgrade"], "pocketgoblin_upgrade",
+            function(_, details)
+                if not details.itemID then return nil end -- item info not ready yet
+                return ShowsUpgradeArrow(details.itemLink)
+            end,
+            function(itemButton)
+                local arrow = itemButton:CreateTexture(nil, "OVERLAY")
+                arrow:SetTexture(UPGRADE_ICON)
+                arrow:SetSize(15, 15)
+                return arrow
+            end,
+            { corner = "top_left", priority = 2 })
     end
 end
 
@@ -1023,6 +1162,8 @@ local function Debug(toChat)
     ns.DebugDestroyButtons(add)
     if ns.DebugMakeRoom then ns.DebugMakeRoom(add) end
     if ns.DebugSortButton then ns.DebugSortButton(add) else add("Sort button: BagSort.lua not loaded") end
+    add("Upgrades judged by %s; arrow %s (needs Pawn), keep rule %s.", ns.UpgradeSource(),
+        db.upgradeIcon and "on" or "off", db.protectUpgrades and "on" or "off")
     add("Disenchant: %s, keep rule %s.", KnowsDisenchant() and "known" or "not known",
         db.keepDisenchant and "on" or "off")
     local worn, swapped = 0, 0
@@ -2005,7 +2146,7 @@ local function AddTooltipLine(tooltip, data)
         tooltip:AddLine(L["Pocket Goblin: kept"], LOCK_COLOR[1], LOCK_COLOR[2], LOCK_COLOR[3])
     elseif info and info.itemID == data.id and db.tooltipValue then
         -- Say so when a keep rule is what stops it from being sold.
-        local rule, word = KeepRule(data.id, info.isBound)
+        local rule, word = KeepRule(data.id, info.isBound, info.hyperlink)
         if rule and JunkReason(info, bag, slot, true) then
             tooltip:AddLine(L["Pocket Goblin: kept ("] .. ns.KeepRuleText(rule, word) .. ")",
                 LOCK_COLOR[1], LOCK_COLOR[2], LOCK_COLOR[3], true)
@@ -2412,6 +2553,138 @@ end
 ns.DEFAULT_PROFILE = DEFAULT_PROFILE
 
 ------------------------------------------------------------------------
+-- Sharing lists and profiles (the text format itself is in Share.lua)
+------------------------------------------------------------------------
+
+do
+    -- Profile settings that belong to you, not to the setup you share: where
+    -- your minimap button is, your auto-sell suggestions and list filters.
+    local PRIVATE = { showMinimap = true, minimapAngle = true, addedAt = true, manualSales = true,
+        noSuggest = true, filters = true }
+    -- Settings with a fixed set of values.
+    local CHOICES = {
+        messages = { goblin = true, plain = true, summaries = true, none = true, off = true },
+        iconCorner = { TOPLEFT = true, TOPRIGHT = true, BOTTOMLEFT = true, BOTTOMRIGHT = true },
+        askQuality = { [2] = true, [3] = true, [4] = true },
+    }
+
+    local function IsID(value)
+        return type(value) == "number" and value > 0 and value == math.floor(value) and value < 10000000
+    end
+
+    -- The lists in shared data, keeping only well-formed entries.
+    local function CleanLists(data)
+        local lists = { items = {}, keepWords = {}, keepClasses = {} }
+        if type(data) ~= "table" then return lists end
+        for itemID, flag in pairs(type(data.items) == "table" and data.items or {}) do
+            if IsID(itemID) and type(flag) == "boolean" then lists.items[itemID] = flag end
+        end
+        local seen = {}
+        for _, word in ipairs(type(data.keepWords) == "table" and data.keepWords or {}) do
+            word = type(word) == "string" and strtrim(word:lower()) or ""
+            if word ~= "" and #word <= 50 and not seen[word] then
+                seen[word] = true
+                lists.keepWords[#lists.keepWords + 1] = word
+            end
+        end
+        for classID, on in pairs(type(data.keepClasses) == "table" and data.keepClasses or {}) do
+            if type(classID) == "number" and classID >= 0 and classID < 100 and on == true then
+                lists.keepClasses[classID] = true
+            end
+        end
+        return lists
+    end
+
+    -- A profile from shared data: known settings of the right kind only, so
+    -- a damaged or edited text can't put anything odd in your settings.
+    local function CleanProfile(data)
+        local profile = CleanLists(data)
+        if type(data) ~= "table" then return profile end
+        for key, default in pairs(defaults) do
+            local value = data[key]
+            if type(default) ~= "table" and not PRIVATE[key] and type(value) == type(default)
+                and value == value -- not NaN
+                and (not CHOICES[key] or CHOICES[key][value]) then
+                profile[key] = value
+            end
+        end
+        if type(data.version) == "number" then profile.version = data.version end
+        if type(data.listsVersion) == "number" then profile.listsVersion = data.listsVersion end
+        return profile
+    end
+
+    -- What to share: kind "lists" (auto-sell and keep lists, keep words and
+    -- item types) or "profile" (the whole active profile, but not PRIVATE).
+    function ns.ExportData(kind)
+        local data
+        if kind == "lists" then
+            data = { items = DeepCopy(db.items), keepWords = DeepCopy(db.keepWords),
+                keepClasses = DeepCopy(db.keepClasses) }
+        else
+            data = DeepCopy(db)
+            for key in pairs(PRIVATE) do data[key] = nil end
+        end
+        return { v = 1, kind = kind, name = ns.GetProfileName(), from = UnitName("player"), data = data }
+    end
+
+    -- Counts for an import preview: items to auto-sell, to keep, keep words
+    -- and item types.
+    function ns.CountSharedLists(data)
+        local lists = CleanLists(data)
+        local sell, keep, types = 0, 0, 0
+        for _, flag in pairs(lists.items) do
+            if flag then sell = sell + 1 else keep = keep + 1 end
+        end
+        for _ in pairs(lists.keepClasses) do types = types + 1 end
+        return sell, keep, #lists.keepWords, types
+    end
+
+    -- Adds shared lists to the active profile. Items you've already listed
+    -- stay as they are, and nothing is removed.
+    function ns.ImportSharedLists(data, source)
+        local lists = CleanLists(data)
+        local items, words, types = 0, 0, 0
+        for itemID, flag in pairs(lists.items) do
+            if db.items[itemID] == nil then
+                db.items[itemID] = flag
+                db.addedAt[itemID] = time()
+                items = items + 1
+            end
+        end
+        for _, word in ipairs(lists.keepWords) do
+            if not tContains(db.keepWords, word) then
+                db.keepWords[#db.keepWords + 1] = word
+                words = words + 1
+            end
+        end
+        for classID in pairs(lists.keepClasses) do
+            if not db.keepClasses[classID] then
+                db.keepClasses[classID] = true
+                types = types + 1
+            end
+        end
+        if items + words + types == 0 then
+            Print(L["Nothing new from %s: everything on those lists is on yours already."], source)
+        else
+            Print(L["Imported from %s: %d items, %d name words and %d item types."], source, items, words, types)
+        end
+        ProfileChanged()
+    end
+
+    -- Makes a new profile from a shared one and switches to it; your own
+    -- minimap button stays where it is. False if the name is empty or taken.
+    function ns.CreateSharedProfile(name, data)
+        name = name and strtrim(name)
+        if not name or name == "" or PocketGoblinDB.profiles[name] then return false end
+        local profile = CleanProfile(data)
+        profile.showMinimap, profile.minimapAngle = db.showMinimap, db.minimapAngle
+        PocketGoblinDB.profiles[name] = profile
+        ns.SetProfile(name) -- loading it also brings older shared profiles up to date
+        return true
+    end
+end
+
+------------------------------------------------------------------------
 -- Other addons that sell junk
 ------------------------------------------------------------------------
 
@@ -2591,6 +2864,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         OnDurabilityChanged()
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
         RecordWorn()
+        ns.ForgetUpgradeArrows() -- what's an upgrade depends on what you wear
         RefreshOverlays()
     elseif event == "EQUIPMENT_SETS_CHANGED" then
         setIcons = nil -- a set may have a new name or icon
@@ -2607,7 +2881,10 @@ frame:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "PLAYER_LEVEL_UP" then
         -- UnitLevel can lag behind the event, so check a moment later.
         -- (White gear and food rules depend on your level.)
-        C_Timer.After(1, ns.OnRulesChanged)
+        C_Timer.After(1, function()
+            ns.ForgetUpgradeArrows() -- gear you couldn't wear yet may be wearable now
+            ns.OnRulesChanged()
+        end)
     elseif event == "BAG_UPDATE_DELAYED" then
         -- Selling changes the bags, so this also catches sales if the vendor
         -- update is late. Unchanged lists record nothing.

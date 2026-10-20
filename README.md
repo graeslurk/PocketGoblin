@@ -31,7 +31,7 @@ a coin with a question mark. Epics always ask.
 - Anything on your **keep list**
 - Items whose name contains words you choose, item types you pick, or items worth more than a limit
 - Weapons and armor that quests ask for
-- **Upgrades**: gear better than what you wear in its slot, or that would fill an empty one
+- **Upgrades**: gear better than what you wear in its slot, or that would fill an empty one. With **Pawn** installed, Pawn decides
 - **Gear you swap to**: green or better gear you've put on more than once in the last 30 days, like a resistance set or a swap weapon. Levelling gear you wore once and replaced still sells
 - **Items to disenchant**, on enchanters: green and better weapons and armor
 - Items that earn at least 10 silver (or an amount you choose) more at the **auction house** than at a vendor, when Auctionator or TradeSkillMaster is installed
@@ -50,7 +50,7 @@ None of these are destroyed by the trash can or Make room either.
 ## In your bags
 
 - **Alt+Right-click** any item to put it on the auto-sell list or the keep list
-- **Coin and lock icons** on junk and kept items, in the default bags and in Baganator, and **equipment set icons** in the default bags
+- **Coin and lock icons** on junk and kept items, and a green **upgrade arrow** on better gear (with Pawn), in the default bags and in Baganator, plus **equipment set icons** in the default bags
 - **Destroy button** for the cheapest junk, with a confirmation and a value limit
 - **Make room** when your bags are full: a button on the loot window destroys your cheapest junk and loots, in one click
 - **Open containers**: a button (and a hotkey) opens clams, sacks of loot and other containers, one per click
@@ -69,6 +69,7 @@ None of these are destroyed by the trash can or Make room either.
 - A goblin with **moods**, a **voice** and **milestones** for sales and repairs, who groans at big repair bills
 - Or plain chat messages, only the summaries, or no chat at all
 - **Profiles**, per character, each with its own auto-sell and keep lists. Import another profile's lists into yours without copying its settings
+- **Share** your lists or a whole profile as text: paste it on another account, or give it to a friend
 
 ## Commands
 

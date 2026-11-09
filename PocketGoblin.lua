@@ -77,6 +77,10 @@ local LOCK_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\icon-lock"
 local LOCK_COLOR = { 0.55, 0.8, 1 }
 local ASK_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\icon-ask"
 local UPGRADE_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\icon-upgrade"
+-- The bag icons, for other bag addons' item buttons (Ellesmere.lua).
+ns.ICONS = { coinAtlas = JUNK_ATLAS, coin = FALLBACK_ICON, ask = ASK_ICON, upgrade = UPGRADE_ICON,
+    lock = LOCK_ICON, lockColor = LOCK_COLOR, size = COIN_SIZE }
+ns.LAST_BAG = LAST_BAG
 local ASK_COLOR = { 1, 0.82, 0.25 }
 local SET_FALLBACK_ICON = 134400 -- the question mark the Equipment Manager gives sets without an icon
 local WORN_DAYS = 30 -- gear swapped to this recently is kept (the keepWorn rule)
@@ -497,7 +501,10 @@ end
 if type(PawnResetBags) == "function" then
     hooksecurefunc("PawnResetBags", function()
         ns.ForgetUpgradeArrows()
-        if db then ns.RefreshOverlays() end
+        if db then
+            ns.RefreshOverlays()
+            if ns.RefreshEllesmere then ns.RefreshEllesmere() end
+        end
     end)
 end
 
@@ -520,6 +527,7 @@ local function ShowsUpgradeArrow(link)
         C_Timer.After(0.25, function()
             arrowRetry = false
             ns.RefreshOverlays()
+            if ns.RefreshEllesmere then ns.RefreshEllesmere() end
         end)
     end
     return known ~= nil and known.upgrade -- the old answer until the new one comes
@@ -968,28 +976,42 @@ local function EquipmentSets(bag, slot)
     if ok and inSet then return names or "" end
 end
 
+-- The one icon an item in your bags gets, all in the same corner, in this
+-- order: what happens at the vendor ("coin", or "ask" for the "?" coin), then
+-- gear you've set aside on purpose ("lock", then "set", with the set's icon
+-- as the second value), then "upgrade" for the rest; nil for none. The third
+-- value is true for junk that sells (to grey it out). otherArrow: another
+-- upgrade arrow already shows on it (Pawn's or the game's).
+local function ItemIcon(bag, slot, info, otherArrow)
+    if not info then return nil end
+    local reason = not info.hasNoValue and JunkReason(info, bag, slot)
+    local asks = AsksFirst(info, reason)
+    local junk = (reason and not asks) and true or false
+    if junk and db.showIcons then return "coin", nil, true end
+    if asks and db.showIcons then return "ask", nil, false end
+    if db.keepIcon and db.items[info.itemID] == false then return "lock", nil, junk end
+    local sets = db.setIcon and EquipmentSets(bag, slot)
+    if sets then return "set", SetIconFor(sets), junk end
+    if not otherArrow and ShowsUpgradeArrow(info.hyperlink) then return "upgrade", nil, junk end
+    return nil, nil, junk
+end
+ns.ItemIcon = ItemIcon
+
+-- True if Pawn's arrows show in the bags (Pawn's own option; EllesmereUI's
+-- bags follow it too).
+ns.PawnShowsBagArrows = PawnShowsBagArrows
+
 local function UpdateButtonOverlay(button)
     local bag, slot = GetBagAndSlot(button)
     local info = bag and C_Container.GetContainerItemInfo(bag, slot)
-    local reason = info ~= nil and not info.hasNoValue and JunkReason(info, bag, slot)
-    local asks = AsksFirst(info, reason)
-    local junk = reason and not asks
-    local kept = info ~= nil and db.keepIcon and db.items[info.itemID] == false
-
-    -- One icon per item, all in the same corner, in this order: what happens
-    -- at the vendor (coin, or "?" coin), then gear you've set aside on purpose
-    -- (lock, then equipment set), then the upgrade arrow for the rest.
-    local coin, ask = junk and db.showIcons, asks and db.showIcons
-    local sets = info ~= nil and db.setIcon and not kept and EquipmentSets(bag, slot)
     -- No arrow of ours when Pawn draws its own in these bags, or the game's shows.
     local otherArrow = PawnShowsBagArrows() or (button.UpgradeIcon and button.UpgradeIcon:IsShown())
-    local upgrade = info ~= nil and not (coin or ask or kept or sets or otherArrow) and ShowsUpgradeArrow(info.hyperlink)
-    local lock = kept
-    SetCoin(button, coin)
-    SetAsk(button, ask)
-    SetUpgrade(button, upgrade)
-    SetLock(button, lock)
-    SetSetIcon(button, sets and SetIconFor(sets) or nil)
+    local icon, setIcon, junk = ItemIcon(bag, slot, info, otherArrow)
+    SetCoin(button, icon == "coin")
+    SetAsk(button, icon == "ask")
+    SetUpgrade(button, icon == "upgrade")
+    SetLock(button, icon == "lock")
+    SetSetIcon(button, icon == "set" and setIcon or nil)
     SetGreyedOut(button, junk and db.greyOut, info ~= nil and info.isLocked or false)
 end
 
@@ -1211,6 +1233,7 @@ end
 function ns.OnRulesChanged()
     UpdateBestFood()
     RefreshOverlays()
+    if ns.RefreshEllesmere then ns.RefreshEllesmere() end
     RefreshWindow()
     if ns.UpdateDestroyButtons then ns.UpdateDestroyButtons() end
     if ns.UpdateMerchantPanel then ns.UpdateMerchantPanel() end
@@ -2705,6 +2728,9 @@ local OTHER_SELLERS = {
         end
         return false
     end },
+    { addon = "EllesmereUIQoL", name = "EllesmereUI", option = "Auto Sell Junk", on = function()
+        return EllesmereUIDB == nil or EllesmereUIDB.autoSellJunk ~= false -- on unless turned off
+    end },
     { addon = "Leatrix_Plus", name = "Leatrix Plus", option = "Sell junk automatically", on = function()
         return LeaPlusDB.AutoSellJunk == "On"
     end },
@@ -2866,6 +2892,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         RecordWorn()
         ns.ForgetUpgradeArrows() -- what's an upgrade depends on what you wear
         RefreshOverlays()
+        if ns.RefreshEllesmere then ns.RefreshEllesmere() end
     elseif event == "EQUIPMENT_SETS_CHANGED" then
         setIcons = nil -- a set may have a new name or icon
         RefreshOverlays()

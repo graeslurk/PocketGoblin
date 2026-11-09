@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.0
+
+New:
+- **EllesmereUI bags**: Pocket Goblin now works with EllesmereUI's bag module. Its items get Pocket Goblin's icons (coin, "?" coin, lock, equipment set icon and upgrade arrow, one per item, in the corner you choose), and the trash can and the open-containers button sit in its header, left of EllesmereUI's own icons. EllesmereUI's own sort button is used there instead of Pocket Goblin's
+- **EllesmereUI's "Auto Sell Junk"** (in its Quality of Life settings, on unless you turn it off) is now on the list of other addons Pocket Goblin warns about, since two addons selling at once can sell items on your keep list
+
 ## 1.8.0
 
 New:

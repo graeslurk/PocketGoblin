@@ -88,14 +88,19 @@ local function ShowTooltip(self)
     GameTooltip:Show()
 end
 
-local function CreateOpenButton(size)
+-- ellesmere: a bare light icon like EllesmereUI's header icons, instead of
+-- the default bags' gold one.
+local function CreateOpenButton(size, ellesmere)
     local open = CreateFrame("Button", nil, UIParent)
     open:SetSize(size, size)
-    open.icon = ns.UI.Icon(open, "icon-bag", size - 2, BLIZZARD_GOLD)
+    open.icon = ns.UI.Icon(open, "icon-bag", ellesmere and size - 4 or size - 2,
+        ellesmere and { 0.9, 0.9, 0.9, 1 } or BLIZZARD_GOLD)
     open.icon:SetPoint("CENTER")
     open.count = open:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
     open.count:SetPoint("BOTTOMRIGHT", 3, -2)
-    open:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+    if not ellesmere then
+        open:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+    end
     open:SetScript("OnMouseDown", function(self) self.icon:SetPoint("CENTER", 1, -1) end)
     open:SetScript("OnMouseUp", function(self) self.icon:SetPoint("CENTER") end)
     open:SetScript("OnClick", function(self)
@@ -104,8 +109,14 @@ local function CreateOpenButton(size)
     end)
     open:SetScript("OnEnter", ShowTooltip)
     open:SetScript("OnLeave", GameTooltip_Hide)
+    if ellesmere then
+        open:HookScript("OnEnter", function(self) self.icon:SetAlpha(1) end)
+        open:HookScript("OnLeave", function(self) self.icon:SetAlpha(0.9) end)
+        open.icon:SetAlpha(0.9)
+    end
     return open
 end
+ns.CreateOpenButton = CreateOpenButton -- also for EllesmereUI's bags (Ellesmere.lua)
 
 -- Default bags: next to the trash can, on its outer side (left of it on
 -- the combined bags, right of it on the separate backpack), or where the
@@ -155,6 +166,13 @@ function ns.UpdateOpenButtons()
         baganatorButton:SetAlpha(count > 0 and 1 or 0.35)
         baganatorButton.count:SetText(count > 1 and count or "")
     end
+    -- In EllesmereUI's header it stays too (the header lays it out once), dimmed when empty.
+    local ellesmere = ns.ellesmereOpenButton
+    if ellesmere then
+        ellesmere:SetAlpha(count > 0 and 1 or 0.4)
+        ellesmere.count:SetText(count > 1 and count or "")
+    end
+    if ns.SyncEllesmereHeader then ns.SyncEllesmereHeader() end
 end
 
 function ns.SetupOpenButtons()

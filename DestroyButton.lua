@@ -8,6 +8,8 @@ local L = ns.L
 -- Colour of Blizzard's own title-bar text, for the default bags.
 local BLIZZARD_GOLD = { 1, 0.82, 0, 1 }
 local PORTRAIT_GAP = 4 -- between the separate backpack's bag icon and the trash can
+-- EllesmereUI's header icons: light, a little see-through until hovered.
+local ELLESMERE_COLOR = { 0.9, 0.9, 0.9, 1 }
 
 local buttons = {}
 local baganatorButton
@@ -51,7 +53,11 @@ local function PaintButton(button)
     local UI = ns.UI
     local warn = button.lowSpace and button.hasTarget
     button.freeText:SetShown(button.lowSpace)
-    if button.blizzardStyle then
+    if button.blizzardStyle == "ellesmere" then
+        UI.SetColor(button.trash, warn and UI.C.danger or ELLESMERE_COLOR)
+        button.trash:SetAlpha(button.hovered and 1 or button.hasTarget and 0.9 or 0.45)
+        return
+    elseif button.blizzardStyle then
         -- Gold like the sort button and the bag's title, even with nothing
         -- to destroy (the tooltip says so).
         UI.SetColor(button.trash, button.hovered and button.hasTarget and UI.C.white
@@ -96,14 +102,17 @@ ns.MatchParentLayer = MatchParentLayer -- also used by the sort button
 
 -- size is the frame size. The default style is Pocket Goblin's dark rounded
 -- button; blizzardStyle is a bare gold icon that matches the default bags'
--- title bar.
+-- title bar, or "ellesmere" a bare light one like EllesmereUI's header icons.
 local function CreateDestroyButton(parent, size, blizzardStyle)
     local UI = ns.UI
     local button = CreateFrame("Button", nil, parent)
     button:SetSize(size, size)
     button.blizzardStyle = blizzardStyle
 
-    if blizzardStyle then
+    if blizzardStyle == "ellesmere" then
+        button.trash = UI.Icon(button, "icon-trash", size - 4, ELLESMERE_COLOR)
+        button.trash:SetPoint("CENTER")
+    elseif blizzardStyle then
         button.trash = UI.Icon(button, "icon-trash", size - 2, BLIZZARD_GOLD) -- same size as the sort icon
         button.trash:SetPoint("CENTER")
         button:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
@@ -146,6 +155,7 @@ local function CreateDestroyButton(parent, size, blizzardStyle)
     buttons[#buttons + 1] = button
     return button
 end
+ns.CreateDestroyButton = CreateDestroyButton -- also for EllesmereUI's bags (Ellesmere.lua)
 
 -- The bag window's round bag icon, in the layouts different clients use:
 -- the picture itself first, since the button over it can be wider than
@@ -387,6 +397,7 @@ function ns.SetupDestroyButtons()
 end
 
 function ns.UpdateDestroyButtons()
+    if ns.SyncEllesmereHeader then ns.SyncEllesmereHeader() end
     if #buttons == 0 then return end
 
     for _, button in ipairs(buttons) do

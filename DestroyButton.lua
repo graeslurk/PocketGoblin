@@ -233,15 +233,20 @@ local function AttachToDefaultBags()
     ns.defaultDestroyButton = button -- the open button sits next to it
 end
 
--- Baganator: placed next to its own buttons at the top of the backpack.
+-- Baganator: placed next to its own buttons at the bottom of the backpack,
+-- right of the currency button. (Its top_left spot is still accepted, but
+-- Baganator 870 no longer lays it out, so buttons put there never showed.)
 -- Baganator only lays out regions that are shown, so the button stays shown
 -- (with a trash can) even when there's nothing to destroy.
+local BAGANATOR_SIZE = 22 -- as tall as Baganator's own bottom-row buttons
+ns.BAGANATOR_SIZE = BAGANATOR_SIZE
 local function AttachToBaganator()
     if not (Baganator and Baganator.API and Baganator.API.RegisterRegion) then return end
-    baganatorButton = CreateDestroyButton(UIParent, 30)
+    -- The bare gold icon, like the open button beside it.
+    baganatorButton = CreateDestroyButton(UIParent, BAGANATOR_SIZE, true)
     baganatorButton:SetShown(ns.db.destroyButton)
     hooksecurefunc(baganatorButton, "SetParent", MatchParentLayer)
-    Baganator.API.RegisterRegion("Pocket Goblin", "pocketgoblin_destroy", "backpack", "top_left", baganatorButton)
+    Baganator.API.RegisterRegion("Pocket Goblin", "pocketgoblin_destroy", "backpack", "bottom_left", baganatorButton)
     Baganator.API.RequestLayoutUpdate()
 end
 

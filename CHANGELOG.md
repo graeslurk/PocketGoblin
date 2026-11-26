@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.1
+
+Fixed:
+- **Baganator**: the trash can and the open-containers button show again. Baganator's latest version (870) stopped placing add-on buttons at the top of the backpack, so they had vanished; they now sit at the bottom, right of Baganator's currency button, with the trash can in the same gold style as the open button
+
 ## 1.9.0
 
 New:

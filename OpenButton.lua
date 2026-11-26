@@ -187,9 +187,10 @@ function ns.SetupOpenButtons()
     end
 
     if Baganator and Baganator.API and Baganator.API.RegisterRegion then
-        baganatorButton = CreateOpenButton(30)
+        -- Next to the trash can at the bottom of the backpack (see DestroyButton.lua).
+        baganatorButton = CreateOpenButton(ns.BAGANATOR_SIZE or 22)
         hooksecurefunc(baganatorButton, "SetParent", ns.MatchParentLayer)
-        Baganator.API.RegisterRegion("Pocket Goblin", "pocketgoblin_open", "backpack", "top_left", baganatorButton)
+        Baganator.API.RegisterRegion("Pocket Goblin", "pocketgoblin_open", "backpack", "bottom_left", baganatorButton)
         Baganator.API.RequestLayoutUpdate()
     end
     ns.UpdateOpenButtons()

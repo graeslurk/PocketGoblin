@@ -102,15 +102,20 @@ ns.MatchParentLayer = MatchParentLayer -- also used by the sort button
 
 -- size is the frame size. The default style is Pocket Goblin's dark rounded
 -- button; blizzardStyle is a bare gold icon that matches the default bags'
--- title bar, or "ellesmere" a bare light one like EllesmereUI's header icons.
+-- title bar, "ellesmere" a bare light one like EllesmereUI's header icons,
+-- or "bagnon" a gold one on Bagnon's dark button.
 local function CreateDestroyButton(parent, size, blizzardStyle)
     local UI = ns.UI
-    local button = CreateFrame("Button", nil, parent)
+    local bagnon = blizzardStyle == "bagnon"
+    local button = CreateFrame("Button", nil, parent, bagnon and "BagnonButtonTemplate" or nil)
     button:SetSize(size, size)
     button.blizzardStyle = blizzardStyle
 
     if blizzardStyle == "ellesmere" then
         button.trash = UI.Icon(button, "icon-trash", size - 4, ELLESMERE_COLOR)
+        button.trash:SetPoint("CENTER")
+    elseif bagnon then -- the template brings the border, highlight and pressed look
+        button.trash = UI.Icon(button, "icon-trash", size - 4, BLIZZARD_GOLD)
         button.trash:SetPoint("CENTER")
     elseif blizzardStyle then
         button.trash = UI.Icon(button, "icon-trash", size - 2, BLIZZARD_GOLD) -- same size as the sort icon
@@ -403,6 +408,7 @@ end
 
 function ns.UpdateDestroyButtons()
     if ns.SyncEllesmereHeader then ns.SyncEllesmereHeader() end
+    if ns.SyncBagnon then ns.SyncBagnon() end
     if #buttons == 0 then return end
 
     for _, button in ipairs(buttons) do

@@ -121,7 +121,7 @@ local function PlaceHeaderButtons(bags)
     if not (ns.db and header and edge) then return end
     if not trash then
         trash = ns.CreateDestroyButton(header, BUTTON_SIZE, "ellesmere")
-        open = ns.CreateOpenButton(BUTTON_SIZE, true)
+        open = ns.CreateOpenButton(BUTTON_SIZE, "ellesmere")
         open:SetParent(header)
         ns.ellesmereOpenButton = open
         C_Timer.After(0, function() -- fill them in (what to destroy, how many to open)

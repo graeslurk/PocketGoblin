@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+New:
+- **Bagnon**: Pocket Goblin now works with Bagnon. Its items get Pocket Goblin's icons (coin, "?" coin, lock, equipment set icon and upgrade arrow, in the corner you choose) and junk is greyed out, in your own bags (not the bank, or another character's bags). The trash can and the open-containers button sit in Bagnon's row of buttons at the top left, next to its bag, sort and search buttons. Bagnon's own sort button is used there instead of Pocket Goblin's
+
+Changed:
+- On the Bags page, **Show open button** moved up next to the sort button, so it's no longer lost among the trash can's settings
+
 ## 1.9.1
 
 Fixed:

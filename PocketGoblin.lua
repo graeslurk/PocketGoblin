@@ -1001,8 +1001,9 @@ ns.ItemIcon = ItemIcon
 -- bags follow it too).
 ns.PawnShowsBagArrows = PawnShowsBagArrows
 
-local function UpdateButtonOverlay(button)
-    local bag, slot = GetBagAndSlot(button)
+-- Paints the icons on an item button in the bags; bag nil clears them.
+-- Also for Bagnon's item buttons (Bagnon.lua), which know their own slot.
+local function PaintItemOverlay(button, bag, slot)
     local info = bag and C_Container.GetContainerItemInfo(bag, slot)
     -- No arrow of ours when Pawn draws its own in these bags, or the game's shows.
     local otherArrow = PawnShowsBagArrows() or (button.UpgradeIcon and button.UpgradeIcon:IsShown())
@@ -1013,6 +1014,11 @@ local function UpdateButtonOverlay(button)
     SetLock(button, icon == "lock")
     SetSetIcon(button, icon == "set" and setIcon or nil)
     SetGreyedOut(button, junk and db.greyOut, info ~= nil and info.isLocked or false)
+end
+ns.PaintItemOverlay = PaintItemOverlay
+
+local function UpdateButtonOverlay(button)
+    PaintItemOverlay(button, GetBagAndSlot(button))
 end
 
 local function IsItemButton(frame)
@@ -1056,6 +1062,7 @@ local function RefreshOverlays()
     C_Timer.After(0, function()
         overlayPending = false
         ForEachBagButton(UpdateButtonOverlay)
+        if ns.RefreshBagnon then ns.RefreshBagnon() end
     end)
 end
 ns.RefreshOverlays = RefreshOverlays

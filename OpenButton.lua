@@ -88,17 +88,20 @@ local function ShowTooltip(self)
     GameTooltip:Show()
 end
 
--- ellesmere: a bare light icon like EllesmereUI's header icons, instead of
--- the default bags' gold one.
-local function CreateOpenButton(size, ellesmere)
-    local open = CreateFrame("Button", nil, UIParent)
+-- style: "ellesmere" for a bare light icon like EllesmereUI's header icons,
+-- "bagnon" for a gold one on Bagnon's dark button, otherwise the default
+-- bags' bare gold one.
+local function CreateOpenButton(size, style)
+    local ellesmere = style == "ellesmere"
+    local bagnon = style == "bagnon"
+    local open = CreateFrame("Button", nil, UIParent, bagnon and "BagnonButtonTemplate" or nil)
     open:SetSize(size, size)
-    open.icon = ns.UI.Icon(open, "icon-bag", ellesmere and size - 4 or size - 2,
+    open.icon = ns.UI.Icon(open, "icon-bag", (ellesmere or bagnon) and size - 4 or size - 2,
         ellesmere and { 0.9, 0.9, 0.9, 1 } or BLIZZARD_GOLD)
     open.icon:SetPoint("CENTER")
     open.count = open:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
     open.count:SetPoint("BOTTOMRIGHT", 3, -2)
-    if not ellesmere then
+    if not (ellesmere or bagnon) then -- Bagnon's button has its own highlight
         open:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
     end
     open:SetScript("OnMouseDown", function(self) self.icon:SetPoint("CENTER", 1, -1) end)
@@ -166,13 +169,16 @@ function ns.UpdateOpenButtons()
         baganatorButton:SetAlpha(count > 0 and 1 or 0.35)
         baganatorButton.count:SetText(count > 1 and count or "")
     end
-    -- In EllesmereUI's header it stays too (the header lays it out once), dimmed when empty.
-    local ellesmere = ns.ellesmereOpenButton
-    if ellesmere then
-        ellesmere:SetAlpha(count > 0 and 1 or 0.4)
-        ellesmere.count:SetText(count > 1 and count or "")
+    -- In EllesmereUI's header and Bagnon's button row it stays too (they lay
+    -- them out once), dimmed when empty.
+    for _, other in ipairs({ ns.ellesmereOpenButton or false, ns.bagnonOpenButton or false }) do
+        if other then
+            other:SetAlpha(count > 0 and 1 or 0.4)
+            other.count:SetText(count > 1 and count or "")
+        end
     end
     if ns.SyncEllesmereHeader then ns.SyncEllesmereHeader() end
+    if ns.SyncBagnon then ns.SyncBagnon() end
 end
 
 function ns.SetupOpenButtons()

@@ -148,8 +148,9 @@ local defaults = {
         quest = { qualities = {}, flaggedOnly = false, hideLow = false, hideHigh = false, sort = "name" },
         keep = { qualities = {}, inBags = false, sort = "name" },
         -- source: "all", "goblin" or "you"; view: "visits" or "sold" (What you
-        -- sold), which groups by "type" or "quality" over period (see GetItemSales).
-        history = { source = "all", view = "visits", group = "type", period = "character" },
+        -- sold), which groups by "type", "quality" or "rule" over period (see
+        -- GetItemSales) for who: "character" or "account" (all characters).
+        history = { source = "all", view = "sold", group = "type", period = "week", who = "character" },
     },
 }
 
@@ -1564,36 +1565,72 @@ local function SetUpItemSales(character)
         character.rulesCounted = true
     end
     local oldest = OldestDay(DAYS_KEPT)
+    if not character.dayRepairs then
+        -- Repairs you paid per day (for Gold per day), from the history the first time.
+        character.dayRepairs = {}
+        for _, visit in ipairs(character.history or {}) do
+            local day = visit.time and date("%Y-%m-%d", visit.time)
+            for _, repair in ipairs(day and day >= oldest and visit.repairs or {}) do
+                if not repair.guild then character.dayRepairs[day] = (character.dayRepairs[day] or 0) + repair.cost end
+            end
+        end
+    end
     for day in pairs(character.daySales) do
         if day < oldest then character.daySales[day] = nil end
     end
+    for day in pairs(character.dayRepairs) do
+        if day < oldest then character.dayRepairs[day] = nil end
+    end
 end
 
--- What was sold in a period: "today" or "week" (the last 7 days) on this
--- character, "character" (all along) or "account" (all characters). Returns
--- totals as AddToTotals keeps them, and when the counting started.
-function ns.GetItemSales(period)
-    if period == "account" then
-        local merged, since = {}, time()
-        for _, character in pairs(PocketGoblinDB.characters) do
-            if character.itemSales then
+-- What was sold: period "today", "week" (the last 7 days), "fortnight"
+-- (the last 14) or "all", or one day ("YYYY-MM-DD", of the last DAYS_KEPT);
+-- by this character, or with allCharacters by all of them. Returns totals as
+-- AddToTotals keeps them, and when the counting started.
+function ns.GetItemSales(period, allCharacters, day)
+    local characters = allCharacters and PocketGoblinDB.characters or { [characterKey] = charData }
+    local merged, since = {}, time()
+    for _, character in pairs(characters) do
+        if character.itemSales then
+            since = math.min(since, character.itemSalesSince or since)
+            if day or period ~= "all" then
+                local oldest = day or OldestDay(period == "today" and 1 or period == "week" and 7 or DAYS_KEPT)
+                for date_, totals in pairs(character.daySales) do
+                    if date_ == day or (not day and date_ >= oldest) then
+                        for itemID, entry in pairs(totals) do MergeEntry(merged, itemID, entry) end
+                    end
+                end
+            elseif allCharacters then
                 for itemID, entry in pairs(character.itemSales) do MergeEntry(merged, itemID, entry) end
-                since = math.min(since, character.itemSalesSince or since)
+            else
+                merged = character.itemSales -- no need for a copy
             end
         end
-        return merged, since
     end
-    if period == "today" or period == "week" then
-        local oldest = OldestDay(period == "today" and 1 or 7)
-        local merged = {}
-        for day, totals in pairs(charData.daySales) do
-            if day >= oldest then
-                for itemID, entry in pairs(totals) do MergeEntry(merged, itemID, entry) end
+    return merged, since
+end
+
+-- Gold per day: the last 14 days, oldest first, as { day ("YYYY-MM-DD"),
+-- time (its noon), sales (all vendor sales, minus buybacks), repairs (paid
+-- yourself) }, for this character or all of them.
+function ns.GetDays(allCharacters)
+    local now = date("*t")
+    local noon = time({ year = now.year, month = now.month, day = now.day, hour = 12 })
+    local days = {}
+    for back = DAYS_KEPT - 1, 0, -1 do
+        local when = noon - back * 86400
+        local day = date("%Y-%m-%d", when)
+        local entry = { day = day, time = when, sales = 0, repairs = 0 }
+        for _, character in pairs(allCharacters and PocketGoblinDB.characters or { charData }) do
+            for itemID, item in pairs(character.daySales and character.daySales[day] or {}) do
+                -- Not items this game doesn't know (beta data from a copied WTF folder).
+                if C_Item.GetItemInfoInstant(itemID) then entry.sales = entry.sales + item.value end
             end
+            entry.repairs = entry.repairs + (character.dayRepairs and character.dayRepairs[day] or 0)
         end
-        return merged, charData.itemSalesSince
+        days[#days + 1] = entry
     end
-    return charData.itemSales, charData.itemSalesSince
+    return days
 end
 
 -- Records a sale in the history entry for this vendor visit. source is
@@ -1871,6 +1908,9 @@ local function MergeCharacterData(target, source)
     for day, totals in pairs(source.daySales) do
         target.daySales[day] = target.daySales[day] or {}
         for itemID, entry in pairs(totals) do MergeEntry(target.daySales[day], itemID, entry) end
+    end
+    for day, cost in pairs(source.dayRepairs or {}) do
+        target.dayRepairs[day] = (target.dayRepairs[day] or 0) + cost
     end
     target.itemSalesSince = math.min(target.itemSalesSince or time(), source.itemSalesSince or time())
 end
@@ -2169,6 +2209,8 @@ local function OnDurabilityChanged()
             charData.repairs = charData.repairs + spent
             charData.repairsToday = charData.repairsToday + spent
             session.repairs = session.repairs + spent
+            local day = date("%Y-%m-%d")
+            charData.dayRepairs[day] = (charData.dayRepairs[day] or 0) + spent
         end
         ns.CheckMilestones()
         RefreshWindow()

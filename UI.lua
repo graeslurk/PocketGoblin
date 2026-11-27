@@ -2385,11 +2385,18 @@ end
 ------------------------------------------------------------------------
 
 local SOLD_PERIODS = {
-    { "today", L["Today"] }, { "week", L["Last 7 days"] },
-    { "character", L["This character"] }, { "account", L["All characters"] },
+    { "today", L["Today"] }, { "week", L["Last 7 days"] }, { "fortnight", L["Last 14 days"] }, { "all", L["All time"] },
 }
+local SOLD_WHO = { { "character", L["This character"] }, { "account", L["All characters"] } }
 local SOLD_GROUPS = { { "type", L["Type"] }, { "quality", L["Quality"] }, { "rule", L["Rule"] } }
-local function SoldFilter() return ns.db.filters.history end
+local function SoldFilter()
+    local filter = ns.db.filters.history
+    -- Before the period and the characters were two choices, period held both.
+    if filter.period == "account" or filter.period == "character" then
+        filter.who, filter.period = filter.period, "all"
+    end
+    return filter
+end
 -- The view's helpers live in this block (UI.lua is close to Lua's limit of
 -- 200 locals at the top of a file).
 local RefreshSold, BuildSoldView
@@ -2534,6 +2541,188 @@ do
         return row
     end
 
+    -- Gold per day: the last 14 days as bars, what sold in gold and the
+    -- repairs you paid in red, each day's sales, repairs and net on hover.
+    -- Click a day to see what it sold; days outside the period are dimmed.
+    local PLOT_HEIGHT = 80
+    local CHART_HEIGHT = 32 + PLOT_HEIGHT + 22
+
+    local function DayTime(day)
+        local year, month, date_ = day:match("^(%d+)-(%d+)-(%d+)$")
+        return time({ year = tonumber(year), month = tonumber(month), day = tonumber(date_), hour = 12 })
+    end
+
+    local function CreateDayChart(parent)
+        local chart = CreateFrame("Frame", nil, parent)
+        chart:SetHeight(CHART_HEIGHT)
+        local title = Text(chart, 11, C.muted)
+        title:SetPoint("TOPLEFT", 10, 0)
+        title:SetText(L["GOLD PER DAY"])
+
+        -- Legend, on the right.
+        local repairsText = Text(chart, 11, C.muted)
+        repairsText:SetPoint("TOPRIGHT", -10, 0)
+        repairsText:SetText(L["Repairs"])
+        local repairsSwatch = chart:CreateTexture(nil, "ARTWORK")
+        repairsSwatch:SetSize(8, 8)
+        repairsSwatch:SetColorTexture(REPAIR_COLOR[1], REPAIR_COLOR[2], REPAIR_COLOR[3], 1)
+        repairsSwatch:SetPoint("RIGHT", repairsText, "LEFT", -5, 0)
+        local salesText = Text(chart, 11, C.muted)
+        salesText:SetPoint("RIGHT", repairsSwatch, "LEFT", -12, 0)
+        salesText:SetText(L["Sales"])
+        local salesSwatch = chart:CreateTexture(nil, "ARTWORK")
+        salesSwatch:SetSize(8, 8)
+        salesSwatch:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 1)
+        salesSwatch:SetPoint("RIGHT", salesText, "LEFT", -5, 0)
+
+        local plot = CreateFrame("Frame", nil, chart)
+        plot:SetPoint("TOPLEFT", 10, -32)
+        plot:SetPoint("TOPRIGHT", -10, -32)
+        plot:SetHeight(PLOT_HEIGHT)
+        local topLine = plot:CreateTexture(nil, "BACKGROUND")
+        topLine:SetColorTexture(1, 1, 1, 0.05)
+        topLine:SetHeight(1)
+        topLine:SetPoint("TOPLEFT")
+        topLine:SetPoint("TOPRIGHT")
+        local baseline = plot:CreateTexture(nil, "BACKGROUND")
+        baseline:SetColorTexture(1, 1, 1, 0.12)
+        baseline:SetHeight(1)
+        baseline:SetPoint("BOTTOMLEFT")
+        baseline:SetPoint("BOTTOMRIGHT")
+        -- The top line's value.
+        chart.maxLabel = Text(chart, 10, C.muted)
+        chart.maxLabel:SetPoint("BOTTOMLEFT", plot, "TOPLEFT", 0, 3)
+
+        -- The period's days: a gold band behind them, a line along its top
+        -- and the period's name above it (not for the whole 14 days).
+        local band = plot:CreateTexture(nil, "BACKGROUND", nil, -1)
+        band:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.08)
+        local bandLine = plot:CreateTexture(nil, "BORDER")
+        bandLine:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.8)
+        bandLine:SetHeight(2)
+        bandLine:SetPoint("BOTTOMLEFT", band, "TOPLEFT")
+        bandLine:SetPoint("BOTTOMRIGHT", band, "TOPRIGHT")
+        local bandLabel = Text(chart, 10, C.gold)
+        bandLabel:SetPoint("BOTTOM", bandLine, "TOP", 0, 3)
+
+        local columns = {}
+        local days, biggest = {}, 0
+        local function ShowDay(column)
+            local day = days[column.index]
+            if not day then return end
+            GameTooltip:SetOwner(column, "ANCHOR_TOP")
+            GameTooltip:SetText(date("%A, %b %d", day.time), 1, 1, 1)
+            local function line(label, text, color)
+                GameTooltip:AddDoubleLine(label, text, 0.7, 0.7, 0.7, color[1], color[2], color[3])
+            end
+            line(L["Sales"], FormatMoney(day.sales), C.text)
+            line(L["Repairs"], day.repairs > 0 and "-" .. FormatMoney(day.repairs) or "0", REPAIR_COLOR)
+            local net = day.sales - day.repairs
+            line(L["Net"], FormatNet(net), net < 0 and REPAIR_COLOR or PROFIT_COLOR)
+            if day.sales > 0 then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine(history.selectedDay == day.day and L["Click again to see the whole period."]
+                    or L["Click to see what sold this day."], 0.53, 0.54, 0.58)
+            end
+            GameTooltip:Show()
+        end
+
+        for i = 1, 14 do
+            local column = CreateFrame("Button", nil, plot)
+            column.index = i
+            column.band = column:CreateTexture(nil, "BACKGROUND")
+            column.band:SetAllPoints()
+            column.band:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.1)
+            column.band:Hide()
+            column.hover = column:CreateTexture(nil, "BACKGROUND", nil, 1)
+            column.hover:SetAllPoints()
+            column.hover:SetColorTexture(1, 1, 1, 0.04)
+            column.hover:Hide()
+            column.sales = column:CreateTexture(nil, "ARTWORK")
+            column.sales:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.9)
+            column.repairs = column:CreateTexture(nil, "ARTWORK")
+            column.repairs:SetColorTexture(REPAIR_COLOR[1], REPAIR_COLOR[2], REPAIR_COLOR[3], 0.9)
+            column.label = Text(chart, 10, C.muted)
+            column.label:SetPoint("TOP", column, "BOTTOM", 0, -5)
+            column:SetScript("OnEnter", function(self)
+                self.hover:Show()
+                ShowDay(self)
+            end)
+            column:SetScript("OnLeave", function(self)
+                self.hover:Hide()
+                GameTooltip_Hide()
+            end)
+            column:SetScript("OnClick", function(self)
+                local day = days[self.index]
+                if not day or day.sales <= 0 then return end
+                PlayToggleSound(true)
+                history.selectedDay = history.selectedDay ~= day.day and day.day or nil
+                history.selectedGroup = nil
+                ns.RefreshWindow()
+                if self:IsMouseOver() then ShowDay(self) end
+            end)
+            columns[i] = column
+        end
+
+        -- Places the columns and sizes the bars for the plot's width.
+        local function Layout()
+            local width = plot:GetWidth()
+            if not width or width <= 0 then return end
+            local step = width / #columns
+            local barWidth = math.max(3, math.floor((step - 8) / 2))
+            for i, column in ipairs(columns) do
+                column:ClearAllPoints()
+                column:SetPoint("BOTTOMLEFT", plot, "BOTTOMLEFT", (i - 1) * step, 0)
+                column:SetSize(step, PLOT_HEIGHT)
+                local day = days[i]
+                local function bar(texture, value, point, x)
+                    texture:SetShown(value > 0 and biggest > 0)
+                    if value > 0 and biggest > 0 then
+                        texture:ClearAllPoints()
+                        texture:SetPoint(point, column, "BOTTOM", x, 0)
+                        texture:SetSize(barWidth, math.max(2, PLOT_HEIGHT * value / biggest))
+                    end
+                end
+                bar(column.sales, day and day.sales or 0, "BOTTOMRIGHT", -1)
+                bar(column.repairs, day and day.repairs or 0, "BOTTOMLEFT", 1)
+            end
+        end
+        plot:SetScript("OnSizeChanged", Layout)
+
+        -- days: GetDays; shown: how many of the last days are in the period,
+        -- periodName: its name over the band.
+        function chart:SetDays(newDays, shown, selectedDay, periodName)
+            days, biggest = newDays, 0
+            for _, day in ipairs(days) do biggest = math.max(biggest, day.sales, day.repairs) end
+            self.maxLabel:SetText(biggest > 0 and FormatMoney(biggest) or "")
+            for i, column in ipairs(columns) do
+                local day = days[i]
+                local lit
+                if selectedDay then lit = day ~= nil and selectedDay == day.day else lit = i > #columns - shown end
+                column:SetAlpha(lit and 1 or 0.25)
+                column.band:SetShown(day ~= nil and selectedDay == day.day)
+                column.label:SetText(day and (i == #columns and L["Today"] or tonumber(date("%d", day.time))) or "")
+                local color = lit and C.text or C.muted
+                column.label:SetTextColor(color[1], color[2], color[3])
+                column.label:SetAlpha(lit and 1 or 0.6)
+            end
+            -- The band only marks part of the chart, and not while a day is picked.
+            local banded = not selectedDay and shown < #columns
+            band:SetShown(banded)
+            bandLine:SetShown(banded)
+            bandLabel:SetShown(banded)
+            if banded then
+                band:ClearAllPoints()
+                band:SetPoint("TOPLEFT", columns[#columns - shown + 1], "TOPLEFT")
+                band:SetPoint("BOTTOMRIGHT", plot, "BOTTOMRIGHT")
+                bandLabel:SetText(periodName:upper())
+            end
+            Layout()
+            return biggest
+        end
+        return chart
+    end
+
     -- One of the top items: icon with its quality border, name, how many and gold.
     local function CreateTopItemRow(content)
         local row = CreateFrame("Button", nil, content)
@@ -2575,7 +2764,21 @@ do
         local sold = history.sold
         local filter = SoldFilter()
         local group = filter.group
-        local totals, since = ns.GetItemSales(filter.period)
+        -- The chart first: a selected day must be one of its days.
+        local allCharacters = filter.who == "account"
+        local days = ns.GetDays(allCharacters)
+        local known = false
+        for _, day in ipairs(days) do known = known or day.day == history.selectedDay end
+        if not known then history.selectedDay = nil end
+        local selectedDay = history.selectedDay
+        local shown = filter.period == "today" and 1 or filter.period == "week" and 7 or #days
+        local periodName
+        for _, option in ipairs(SOLD_PERIODS) do
+            if option[1] == filter.period then periodName = option[2] end
+        end
+        local chartMax = sold.chart:SetDays(days, shown, selectedDay, periodName or "")
+
+        local totals, since = ns.GetItemSales(filter.period, allCharacters, selectedDay)
         -- The rows span the content; make sure it has the scroll area's width.
         local width = sold.scroll:GetWidth()
         if width and width > 1 then sold.content:SetWidth(width) end
@@ -2628,12 +2831,26 @@ do
             return a.itemID < b.itemID
         end)
 
-        sold.empty:SetShown(#groups == 0)
-        sold.summary:SetShown(#groups > 0)
+        -- With nothing at all to show, the empty message takes the whole view.
+        local nothing = #groups == 0 and chartMax == 0
+        sold.empty:SetShown(nothing)
+        sold.summary:SetShown(not nothing)
+        sold.chart:SetShown(not nothing)
         sold.topTitle:SetShown(#groups > 0)
-        sold.summary:SetText(L["%s for %s"]:format(ItemCount(totalCount), FormatMoney(totalValue)))
+        local summary = #groups == 0 and L["Nothing sold in this period"]
+            or L["%s for %s"]:format(ItemCount(totalCount), FormatMoney(totalValue))
+        if selectedDay then summary = date("%A, %b %d", DayTime(selectedDay)) .. ":  " .. summary end
+        sold.summary:SetText(summary)
 
-        local y = -34
+        sold.chart:ClearAllPoints()
+        sold.chart:SetPoint("TOPLEFT", 0, -36)
+        sold.chart:SetPoint("TOPRIGHT", 0, -36)
+        local y = -36 - CHART_HEIGHT - 16
+        -- The bars below group by Type, Quality or Rule.
+        sold.groupSwitch:ClearAllPoints()
+        sold.groupSwitch:SetPoint("TOPLEFT", 10, y)
+        sold.groupSwitch:SetShown(#groups > 0)
+        if #groups > 0 then y = y - 30 - 10 end
         local biggest = groups[1] and groups[1].value or 1
         for i, g in ipairs(groups) do
             local row = sold.groupRows[i] or CreateGroupRow(sold.content)
@@ -2712,6 +2929,14 @@ do
         sold.scroll:SetPoint("BOTTOMRIGHT", -12, 0)
 
         sold.summary = Text(sold.content, 13, C.text)
+        sold.chart = CreateDayChart(sold.content)
+        sold.groupSwitch = CreateSegmented(sold.content, SOLD_GROUPS,
+            function() return SoldFilter().group end,
+            function(group)
+                SoldFilter().group = group
+                history.selectedGroup = nil
+                ns.RefreshWindow()
+            end)
         sold.summary:SetPoint("TOPLEFT", 10, -6)
 
         sold.topTitle = Text(sold.content, 11, C.muted)
@@ -2820,31 +3045,32 @@ local function BuildHistoryPage(page)
     history.count = CreateBadge(card, C.muted, { 1, 1, 1, 0.06 })
     history.count:SetPoint("LEFT", history.view, "RIGHT", 10, 0)
 
-    history.periodMenu = CreateDropdown(card, 140,
-        function()
-            for _, option in ipairs(SOLD_PERIODS) do
-                if option[1] == SoldFilter().period then return option[2] end
-            end
-            return SOLD_PERIODS[3][2]
-        end,
-        function(root)
-            for _, option in ipairs(SOLD_PERIODS) do
-                root:CreateRadio(option[2], function() return SoldFilter().period == option[1] end, function()
-                    SoldFilter().period = option[1]
-                    history.periodMenu:UpdateLabel()
-                    ns.RefreshWindow()
-                end)
-            end
-        end)
+    -- What you sold: which days, and whose.
+    local function Menu(width, options, key, onChange)
+        local menu
+        menu = CreateDropdown(card, width,
+            function()
+                for _, option in ipairs(options) do
+                    if option[1] == SoldFilter()[key] then return option[2] end
+                end
+                return options[1][2]
+            end,
+            function(root)
+                for _, option in ipairs(options) do
+                    root:CreateRadio(option[2], function() return SoldFilter()[key] == option[1] end, function()
+                        SoldFilter()[key] = option[1]
+                        if onChange then onChange() end
+                        menu:UpdateLabel()
+                        ns.RefreshWindow()
+                    end)
+                end
+            end)
+        return menu
+    end
+    history.periodMenu = Menu(130, SOLD_PERIODS, "period", function() history.selectedDay = nil end)
     history.periodMenu:SetPoint("TOPRIGHT", -16, -14)
-    history.groupSwitch = CreateSegmented(card, SOLD_GROUPS,
-        function() return SoldFilter().group end,
-        function(group)
-            SoldFilter().group = group
-            history.selectedGroup = nil
-            ns.RefreshWindow()
-        end)
-    history.groupSwitch:SetPoint("RIGHT", history.periodMenu, "LEFT", -8, 0)
+    history.whoMenu = Menu(140, SOLD_WHO, "who")
+    history.whoMenu:SetPoint("RIGHT", history.periodMenu, "LEFT", -8, 0)
 
     local function sourceFilter() return ns.db.filters.history end
     history.sourceMenu = CreateDropdown(card, 150,
@@ -2911,9 +3137,10 @@ local function RefreshHistory()
     history.count:SetShown(not soldView)
     history.sourceMenu:SetShown(not soldView)
     history.periodMenu:SetShown(soldView)
-    history.groupSwitch:SetShown(soldView)
+    history.whoMenu:SetShown(soldView)
     if soldView then
         history.periodMenu:UpdateLabel()
+        history.whoMenu:UpdateLabel()
         RefreshSold()
         return
     end

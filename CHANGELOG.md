@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Fixed:
+- **RestedXP Guides and Cheap Upgrades sell junk too**: Pocket Goblin now warns when their auto-sell is on (**Auto Sell Junk** in RestedXP Guides, **Sell grey items automatically** in Cheap Upgrades), like it does for Leatrix Plus or EllesmereUI. They sell your greys the moment a vendor opens, before Pocket Goblin, so those sales showed as yours in the history
+- The vendor panel no longer suggests auto-selling grey items: they're junk by their own rule (**Grey and white items**)
+
 ## 1.11.0
 
 New:

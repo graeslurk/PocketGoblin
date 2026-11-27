@@ -45,7 +45,7 @@ None of these are destroyed by the trash can or Make room either.
 - **Vendor panel** next to the vendor window: *Sell junk*, the items waiting for your OK, and buyback of anything you sold, one item at a time or all at once
 - **Auto-repair**, optionally from guild funds
 - **Suggestions**: sell the same item yourself a few times and your goblin offers to auto-sell it
-- **Warns** when another addon (Naowh Forever, Leatrix Plus, Scrap and others) also sells junk at vendors, since two sellers can sell what you meant to keep
+- **Warns** when another addon (Naowh Forever, RestedXP Guides, Leatrix Plus, Scrap and others) also sells junk at vendors, since two sellers can sell what you meant to keep
 
 ## In your bags
 

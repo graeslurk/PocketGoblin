@@ -1490,7 +1490,7 @@ local function RecordSale(entry, source)
     if source == "goblin" then
         session.lastSale = GetTime()
         ns.CheckMilestones()
-    elseif db.items[entry.itemID] == nil and not db.noSuggest[entry.itemID] then
+    elseif quality ~= POOR and db.items[entry.itemID] == nil and not db.noSuggest[entry.itemID] then
         db.manualSales[entry.itemID] = (db.manualSales[entry.itemID] or 0) + 1
     end
 end
@@ -1502,8 +1502,10 @@ end
 local SUGGEST_AFTER = 3 -- times you sold an item yourself before it's suggested
 
 -- The item you've sold yourself most often (at least SUGGEST_AFTER times)
--- that isn't on a list, wasn't declined and isn't junk already. Returns the
--- item ID and how many times, or nil.
+-- that isn't on a list, wasn't declined and isn't junk already. Never a
+-- grey: greys are junk by their own rule, even when a keep rule or a
+-- switched-off grey rule left them for you to sell. Returns the item ID and
+-- how many times, or nil.
 function ns.GetSuggestion()
     local bestID, bestCount
     for itemID, count in pairs(db.manualSales) do
@@ -1512,6 +1514,8 @@ function ns.GetSuggestion()
             local _, _, quality = C_Item.GetItemInfo(itemID)
             if quality == nil then
                 C_Item.RequestLoadItemDataByID(itemID) -- try again on the next update
+            elseif quality == POOR then
+                db.manualSales[itemID] = nil -- counted before greys were left out
             elseif not IsJunk(itemID, quality) then
                 bestID, bestCount = itemID, count
             end
@@ -2752,6 +2756,13 @@ local OTHER_SELLERS = {
     end },
     { addon = "Leatrix_Plus", name = "Leatrix Plus", option = "Sell junk automatically", on = function()
         return LeaPlusDB.AutoSellJunk == "On"
+    end },
+    { addon = "RXPGuides", name = "RestedXP Guides", option = "Auto Sell Junk", on = function()
+        local profile = LibStub("AceAddon-3.0"):GetAddon("RXPGuides").settings.profile
+        return profile.enableInventoryManager and profile.autoSellJunk
+    end },
+    { addon = "CheapUpgrades", name = "Cheap Upgrades", option = "Sell grey items automatically", on = function()
+        return CheapUpgrades.db.autoJunk
     end },
     { addon = "ElvUI", name = "ElvUI", on = function() return ElvUI[1].db.general.vendorGrays end },
     { addon = "Scrap", name = "Scrap" },

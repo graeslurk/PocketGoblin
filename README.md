@@ -62,8 +62,10 @@ None of these are destroyed by the trash can or Make room either.
 ## The goblin's ledger
 
 - **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs, with a search for items and vendors and visits that fold away
-- **What you sold**: every vendor sale added up by item type, quality or the junk rule that sold it, with the gold and share of each, and the items that made you the most, and a **gold per day** chart of your sales and repairs over the last 14 days; today, the last 7 or 14 days or all time, for one character or all of them
-- **Earnings** this session, today, per character and across all characters; forget a deleted character, or merge one the game listed twice, on the General page
+- **What you sold**: every vendor sale added up by item type, quality or the junk rule that sold it, with the gold and share of each and your top items. Pick today, the last 7 or 14 days or all time, for one character or all of them
+- **Gold per day**: a chart of your sales and repairs over the last 14 days. Hover a day for its net, click it to see what sold
+- **Earnings** this session, today, per character and across all characters
+- **Characters**: forget one you deleted, or merge one the game listed twice after renaming its realm
 - **Repair costs and net profit** for the same periods: what you sold minus what you paid to repair. Hover for the full breakdown and your most expensive repair
 
 ## Your goblin, your way

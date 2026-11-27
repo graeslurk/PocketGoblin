@@ -3473,6 +3473,7 @@ local function BuildGeneralPage(page)
                 .. "renamed its realm, log on to it and merge the other entry into it. Forget a character you deleted, "
                 .. "or one that came along from another version of the game, and its sales leave All characters. "
                 .. "Profiles stay either way."])
+        NewsDot(card, "characters")
         local function Details(character)
             local sold = L["Sold %s in all"]:format(character.earned > 0 and GetMoneyString(character.earned, true) or "0")
             if not character.lastVisit then return sold end

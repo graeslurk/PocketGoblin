@@ -1169,7 +1169,7 @@ local function CreateChip(parent, label, dotColor, onToggle)
     return chip
 end
 
-local function CreateSearchBox(parent, onChange)
+local function CreateSearchBox(parent, onChange, placeholderText)
     local search = CreateFrame("EditBox", nil, parent)
     search:SetSize(200, 30)
     search:SetAutoFocus(false)
@@ -1182,7 +1182,7 @@ local function CreateSearchBox(parent, onChange)
     icon:SetPoint("LEFT", 10, 0)
     local placeholder = Text(search, 13, C.muted)
     placeholder:SetPoint("LEFT", 30, 0)
-    placeholder:SetText(L["Search items"])
+    placeholder:SetText(placeholderText or L["Search items"])
     search:SetScript("OnEscapePressed", search.ClearFocus)
     search:SetScript("OnEnterPressed", search.ClearFocus)
     search:SetScript("OnEditFocusGained", function() SetColor(border, C.gold) end)
@@ -2282,7 +2282,18 @@ local function CreateHistoryRow(index)
     row.name = Text(row, 13, C.text)
     row.name:SetWordWrap(false)
 
+    -- A visit's header folds its items away and back (not while searching).
+    row.chevron = Icon(row, "icon-chevron", 12, C.muted)
+    row.chevron:SetPoint("LEFT", 10, 0)
+    row:SetScript("OnClick", function(self)
+        if not self.visit or history.search ~= "" then return end
+        PlayToggleSound(true)
+        history.expanded[self.visit] = not self.open
+        ns.RefreshWindow()
+    end)
+
     row:SetScript("OnEnter", function(self)
+        if self.visit and history.search == "" then hover:Show() end
         if not self.sold then return end
         hover:Show()
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -2300,9 +2311,14 @@ local function UpdateHistoryRow(row, entry)
     row.name:ClearAllPoints()
     row.detail:ClearAllPoints()
 
+    row.visit = entry.visit
+    row.open = entry.open
+    row.chevron:SetShown(entry.visit ~= nil)
     if entry.visit then
         local visit = entry.visit
         row.sold = nil
+        -- Pointing down when open, right when folded.
+        row.chevron:SetRotation(entry.open and 0 or math.pi / 2)
         row.band:Show()
         row.border:Hide()
         row.icon:Hide()
@@ -2311,9 +2327,11 @@ local function UpdateHistoryRow(row, entry)
         row.source:Hide()
         row:SetAlpha(1)
         row.detail:SetPoint("RIGHT", -10, 0)
-        row.detail:SetText(entry.total > 0 and FormatMoney(entry.total) or "")
+        local count = entry.count == 1 and L["1 item"] or L["%s items"]:format(entry.count)
+        row.detail:SetText((entry.count > 0 and "|cff8a8b93" .. count .. "|r   " or "")
+            .. (entry.total > 0 and FormatMoney(entry.total) or ""))
         row.detail:SetTextColor(C.text[1], C.text[2], C.text[3])
-        row.name:SetPoint("LEFT", 10, 0)
+        row.name:SetPoint("LEFT", 28, 0)
         row.name:SetPoint("RIGHT", row.detail, "LEFT", -10, 0)
         row.name:SetText(VisitTime(visit.time) .. (visit.vendor and ("  |cff8a8b93" .. visit.vendor .. "|r") or ""))
         row.name:SetTextColor(C.text[1], C.text[2], C.text[3])
@@ -3094,8 +3112,31 @@ local function BuildHistoryPage(page)
     local area = CreateFrame("Frame", nil, card)
     area:SetPoint("TOPLEFT", 10, -50)
     area:SetPoint("BOTTOMRIGHT", -10, 10)
+    -- Search items and vendors; fold or open all visits.
+    history.search = ""
+    history.expanded = setmetatable({}, { __mode = "k" }) -- [visit] = open; unset: only the newest is
+    local search = CreateSearchBox(area, function(text)
+        history.search = text
+        ns.RefreshWindow()
+    end, L["Search items or vendors"])
+    search:SetSize(240, 28)
+    search:SetPoint("TOPLEFT", 0, 0)
+    history.foldAll = CreateFrame("Button", nil, area)
+    history.foldAll:SetSize(100, 20)
+    history.foldAll:SetPoint("TOPRIGHT", -12, -4)
+    history.foldAll.text = Text(history.foldAll, 12, C.gold)
+    history.foldAll.text:SetPoint("RIGHT")
+    history.foldAll.text:SetJustifyH("RIGHT")
+    history.foldAll:SetScript("OnEnter", function(self) self.text:SetTextColor(C.goldHover[1], C.goldHover[2], C.goldHover[3]) end)
+    history.foldAll:SetScript("OnLeave", function(self) self.text:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end)
+    history.foldAll:SetScript("OnClick", function(self)
+        PlayToggleSound(true)
+        for _, visit in ipairs(ns.GetHistory()) do history.expanded[visit] = not self.allOpen end
+        ns.RefreshWindow()
+    end)
+
     history.scroll, history.content = CreateScrollArea(area)
-    history.scroll:SetPoint("TOPLEFT")
+    history.scroll:SetPoint("TOPLEFT", 0, -38)
     history.scroll:SetPoint("BOTTOMRIGHT", -12, 0)
     history.visitsArea = area
     BuildSoldView(area)
@@ -3106,11 +3147,9 @@ local function BuildHistoryPage(page)
     emptyIcon:SetPoint("CENTER", 0, 24)
     local emptyTitle = Text(empty, 15, C.text)
     emptyTitle:SetPoint("TOP", emptyIcon, "BOTTOM", 0, -12)
-    emptyTitle:SetText(L["Nothing sold yet"])
     local emptyBody = Text(empty, 12, C.muted)
     emptyBody:SetPoint("TOP", emptyTitle, "BOTTOM", 0, -6)
-    emptyBody:SetText(L["Sales and repairs show up here after you visit a vendor."])
-    history.empty = empty
+    history.empty, history.emptyTitle, history.emptyBody = empty, emptyTitle, emptyBody
 
     history.note = Text(page, 12, C.muted)
     history.note:SetPoint("BOTTOMLEFT", 22, 22)
@@ -3147,31 +3186,51 @@ local function RefreshHistory()
     history.note:SetText(L["Buy back works while a vendor is open, for items still in its buyback list "
         .. "(the last 12 items you sold)."])
 
-    -- Visits with the sales that match the "Sold by" filter, then their
-    -- repairs; each visit's total is its sales, minus what was bought back.
+    -- Visits with the sales that match the "Sold by" filter and the search,
+    -- then their repairs; each visit's total is its sales, minus what was
+    -- bought back. A visit shows its items while open: the newest one until
+    -- you fold it, and every visit while searching. A search matches item
+    -- names, or the vendor's name (which shows the whole visit).
     local source = ns.db.filters.history.source
+    local search = history.search
     local visits = ns.GetHistory()
     local buybacks = ns.MatchBuybacks()
-    local entries, shownVisits = {}, 0
-    for _, visit in ipairs(visits) do
-        local header = { visit = visit, total = 0 }
+    local entries, shownVisits, allOpen = {}, 0, true
+    for index, visit in ipairs(visits) do
+        local vendorMatch = search ~= "" and visit.vendor and visit.vendor:lower():find(search, 1, true)
+        local header = { visit = visit, total = 0, count = 0 }
         local items = {}
         for _, sold in ipairs(visit.items) do
             local soldBy = sold.source == "you" and "you" or "goblin" -- older saves say "junkseller" or nothing
-            if source == "all" or soldBy == source then
+            local name = search ~= "" and not vendorMatch
+                and (C_Item.GetItemInfo(sold.itemID) or (sold.link and sold.link:match("%[(.-)%]")) or "")
+            if (source == "all" or soldBy == source) and (not name or name:lower():find(search, 1, true)) then
                 items[#items + 1] = { sold = sold, canBuy = buybacks[sold] ~= nil }
+                header.count = header.count + 1
                 if not sold.boughtBack then header.total = header.total + sold.value end
             end
         end
-        for _, repair in ipairs(visit.repairs or {}) do
-            items[#items + 1] = { repair = repair }
+        if search == "" or vendorMatch then
+            for _, repair in ipairs(visit.repairs or {}) do
+                items[#items + 1] = { repair = repair }
+            end
         end
         if #items > 0 then
             shownVisits = shownVisits + 1
+            local open = history.expanded[visit]
+            if open == nil then open = index == 1 end
+            if search ~= "" then open = true end
+            allOpen = allOpen and open
+            header.open = open
             entries[#entries + 1] = header
-            for _, item in ipairs(items) do entries[#entries + 1] = item end
+            if open then
+                for _, item in ipairs(items) do entries[#entries + 1] = item end
+            end
         end
     end
+    history.foldAll.allOpen = allOpen
+    history.foldAll.text:SetText(allOpen and L["Fold all"] or L["Open all"])
+    history.foldAll:SetShown(search == "" and shownVisits > 1)
 
     for i, entry in ipairs(entries) do
         history.rows[i] = history.rows[i] or CreateHistoryRow(i)
@@ -3184,8 +3243,15 @@ local function RefreshHistory()
     history.content:SetHeight(math.max(#entries * ITEM_HEIGHT, 1))
     history.scroll.UpdateScrollBar()
 
-    history.count:SetText(shownVisits == 1 and L["1 visit"] or (shownVisits .. " visits"))
+    history.count:SetText(shownVisits == 1 and L["1 visit"] or L["%d visits"]:format(shownVisits))
     history.empty:SetShown(shownVisits == 0)
+    if search ~= "" then
+        history.emptyTitle:SetText(L["No matches"])
+        history.emptyBody:SetText(L["No item or vendor in your history matches that."])
+    else
+        history.emptyTitle:SetText(L["Nothing sold yet"])
+        history.emptyBody:SetText(L["Sales and repairs show up here after you visit a vendor."])
+    end
 end
 
 

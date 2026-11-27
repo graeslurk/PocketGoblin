@@ -11,6 +11,7 @@ local LAST_BAG = NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4
 local BLIZZARD_GOLD = { 1, 0.82, 0, 1 }
 
 local button, baganatorButton
+ns.openButtons = {} -- every open button, for the tour (Tour.lua)
 
 -- True if the item's tooltip says it's locked (a lockbox not picked yet).
 -- Not cached: picking the lock changes it.
@@ -112,6 +113,8 @@ local function CreateOpenButton(size, style)
     end)
     open:SetScript("OnEnter", ShowTooltip)
     open:SetScript("OnLeave", GameTooltip_Hide)
+    open:SetScript("OnShow", function() if ns.OnBagButtonShown then ns.OnBagButtonShown() end end)
+    table.insert(ns.openButtons, open)
     if ellesmere then
         open:HookScript("OnEnter", function(self) self.icon:SetAlpha(1) end)
         open:HookScript("OnLeave", function(self) self.icon:SetAlpha(0.9) end)

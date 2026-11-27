@@ -64,6 +64,8 @@ local window
 local pages, navButtons, toggles = {}, {}, {}
 local currentPage
 local SelectPage -- defined with the window; pages use it for links
+local newsCard, sidebarFrame -- "What's new" on top of the open page (see CreateNewsCard)
+local LayoutNews -- defined with the news card
 local refreshPending = false
 
 -- List page widgets
@@ -769,6 +771,27 @@ local function AddRow(card, title, description, makeControl)
     return { titleText, descText, control }
 end
 
+-- What's new on a setting: a gold dot after the title of the row just
+-- added, shown while a point on the What's new card names its key
+-- (point.setting in News.lua), so until "Got it".
+local newsDots = {} -- { dot, key }
+local function NewsDot(card, key)
+    local row = card.rows[#card.rows]
+    row.newsDot = Icon(card, "circle", 7, C.gold)
+    row.newsDot:Hide()
+    newsDots[#newsDots + 1] = { row.newsDot, key }
+end
+
+local function UpdateNewsDots()
+    local keys = {}
+    for _, entry in ipairs(ns.UnseenNews()) do
+        for _, point in ipairs(entry.points) do
+            if point.setting then keys[point.setting] = true end
+        end
+    end
+    for _, item in ipairs(newsDots) do item[1]:SetShown(keys[item[2]] or false) end
+end
+
 -- A row with its control under the text, for controls too wide to sit next
 -- to it. With notes (every text it can show), a line under the control that
 -- the caller fills with row.note:SetText; the row is as tall as the longest.
@@ -799,6 +822,13 @@ local function LayoutCard(card, width)
         end
 
         row.title:ClearAllPoints()
+        if row.newsDot then
+            -- Right after the title's text, level with its first line.
+            local _, fontHeight = row.title:GetFont()
+            row.newsDot:ClearAllPoints()
+            row.newsDot:SetPoint("LEFT", row.title, "TOPLEFT",
+                math.min(row.title:GetStringWidth(), textWidth) + 6, -(fontHeight or 14) / 2 - 1)
+        end
         if row.wide then
             row.title:SetPoint("TOPLEFT", 20, y)
             local rowHeight = textHeight
@@ -847,8 +877,18 @@ local function CreateCardPage(page, build)
     content:SetWidth(SCROLL_WIDTH)
 
     local cards = {}
+    local lastWidth
     local function stack(width)
+        width = width or lastWidth
+        lastWidth = width
         local y = -20
+        -- What's new, as the first card while it's on this page.
+        if newsCard and newsCard:IsShown() and newsCard:GetParent() == content then
+            newsCard:Relayout((width or SCROLL_WIDTH) - 40)
+            newsCard:ClearAllPoints()
+            newsCard:SetPoint("TOPLEFT", 20, y)
+            y = y - newsCard:GetHeight() - 16
+        end
         for _, card in ipairs(cards) do
             if width then LayoutCard(card, width - 40) end
             card:ClearAllPoints()
@@ -865,6 +905,7 @@ local function CreateCardPage(page, build)
     end
     build(addCard)
     stack()
+    page.content, page.Restack = content, function() stack() end
     scroll:HookScript("OnSizeChanged", function(_, width)
         if width > 0 then stack(width) end
     end)
@@ -2117,6 +2158,7 @@ local function BuildBagsPage(page)
         AddRow(card, L["Make room when looting"],
             L["A button under the loot window destroys your cheapest junk and loots, in one click."],
             SettingToggle("lootMakeRoom"))
+        NewsDot(card, "lootMakeRoom")
         AddRow(card, L["Warn when bags are nearly full"],
             L["The trash can turns red and shows the free slots, with a chat message."],
             SettingToggle("bagWarning", ns.UpdateDestroyButtons))
@@ -2687,6 +2729,22 @@ local function BuildGeneralPage(page)
         AddRow(card, L["Explain in tooltips"],
             L["Items in your bags say whether they'll be sold or kept, why, and what the stack sells for."],
             SettingToggle("tooltipValue"))
+        AddRow(card, L["Tour"], L["A short tour of your bags and the vendor panel, as after your first install."],
+            function(parent)
+                local button = CreateButton(parent, L["Show the tour"], 120)
+                button:SetScript("OnClick", function()
+                    window:Hide() -- the tour points at the bags
+                    ns.StartTour()
+                end)
+                return button
+            end)
+        NewsDot(card, "tour")
+        AddRow(card, L["Tell me about new features"],
+            L["After an update with new features, one line in chat says what's new. This window shows it either way."],
+            function(parent)
+                return CreateToggle(parent, function() return ns.account.newsChat ~= false end, ns.SetNewsChat)
+            end)
+        NewsDot(card, "newsChat")
         finish()
 
         card, finish = addCard(L["Chat messages"])
@@ -2747,6 +2805,7 @@ local function BuildAboutPage(page)
             { "/goblin profile [name]", L["Show or switch this character's profile"] },
             { "/goblin clear confirm", L["Empty the auto-sell and keep lists"] },
             { "/goblin welcome", L["Show the welcome window again"] },
+            { "/goblin tour", L["A short tour of your bags and the vendor panel"] },
             { "/goblin debug", L["Details to copy into a bug report"] },
         }
         for _, command in ipairs(commands) do
@@ -2821,8 +2880,10 @@ function SelectPage(key)
         if alias[2] then SetKeepTab(alias[2]) end
     end
     currentPage = key
+    ns.MarkPageSeen(key)
     for _, page in ipairs(PAGES) do
         if page.key then
+            navButtons[page.key].newDot:SetShown(ns.PageIsNew(page.key))
             local selected = page.key == key
             pages[page.key]:SetShown(selected)
             local nav = navButtons[page.key]
@@ -2834,6 +2895,7 @@ function SelectPage(key)
         end
     end
     UpdateDropOverlay()
+    LayoutNews() -- What's new moves along to the page
     ns.RefreshWindow() -- the quest gear list only refreshes while it's shown
 end
 
@@ -2857,6 +2919,10 @@ local function CreateNavButton(parent, page, y)
 
     nav.title = Text(nav, 15, C.text)
     nav.title:SetText(page.title)
+    -- A gold dot while the page has news you haven't looked at.
+    nav.newDot = Icon(nav, "circle", 7, C.gold)
+    nav.newDot:SetPoint("LEFT", nav.title, "RIGHT", 6, 0)
+    nav.newDot:Hide()
 
     local subtitle = Text(nav, 11, C.muted)
     subtitle:SetPoint("TOPLEFT", nav.title, "BOTTOMLEFT", 0, -4)
@@ -3009,6 +3075,137 @@ local function CreateHeader()
     line:SetPoint("BOTTOMRIGHT", -1, 0)
 end
 
+------------------------------------------------------------------------
+-- What's new: after an update, a card above whichever page is open, with
+-- each release's points newest first, a "Show me" link to each one's page,
+-- and "Got it" to put it away until the next release with news
+-- (ns.WHATS_NEW, in News.lua). As Fanny Pack's.
+------------------------------------------------------------------------
+
+local NEWS_BULLET = "|T" .. MEDIA .. "circle:7:7:0:0:32:32:0:32:0:32:212:167:44|t  "
+local function CreateNewsCard(parent)
+    local card = CreateCard(parent, L["What's new"])
+    local headings, points = {}, {}
+    local shownHeadings, shownPoints = 0, 0
+
+    local gotIt = CreateButton(card, L["Got it"], 90, "primary")
+    gotIt:SetScript("OnClick", function()
+        ns.DismissNews()
+        LayoutNews()
+    end)
+
+    local function Heading(i)
+        if not headings[i] then headings[i] = Text(card, 12, C.gold) end
+        return headings[i]
+    end
+
+    local function Point(i)
+        if points[i] then return points[i] end
+        local point = {}
+        point.text = Text(card, 13, C.text)
+        point.link = CreateFrame("Button", nil, card)
+        point.link.label = Text(point.link, 12, C.gold)
+        point.link.label:SetPoint("RIGHT")
+        point.link.label:SetText(L["Show me"])
+        point.link:SetSize(point.link.label:GetStringWidth() + 4, 18)
+        point.link:SetScript("OnEnter", function(self) self.label:SetTextColor(C.goldHover[1], C.goldHover[2], C.goldHover[3]) end)
+        point.link:SetScript("OnLeave", function(self) self.label:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end)
+        point.link:SetScript("OnClick", function(self)
+            if self.page and pages[self.page] then SelectPage(self.page) end
+        end)
+        points[i] = point
+        return point
+    end
+
+    -- Puts the entries' text in place; Relayout positions it.
+    function card:Fill(news)
+        shownHeadings, shownPoints = 0, 0
+        self.order = {}
+        for _, entry in ipairs(news) do
+            shownHeadings = shownHeadings + 1
+            local heading = Heading(shownHeadings)
+            heading:SetText(L["Version %s"]:format(entry.version))
+            self.order[#self.order + 1] = heading
+            for _, info in ipairs(entry.points) do
+                shownPoints = shownPoints + 1
+                local point = Point(shownPoints)
+                point.text:SetText(NEWS_BULLET .. info.text)
+                point.link.page = info.page
+                point.link:SetShown(info.page ~= nil)
+                self.order[#self.order + 1] = point
+            end
+        end
+        for i, heading in ipairs(headings) do heading:SetShown(i <= shownHeadings) end
+        for i, point in ipairs(points) do
+            point.text:SetShown(i <= shownPoints)
+            if i > shownPoints then point.link:Hide() end
+        end
+    end
+
+    function card:Relayout(width)
+        self:SetWidth(width)
+        local y = -52
+        for _, item in ipairs(self.order or {}) do
+            if item.text then -- a point, with its link on the right
+                item.text:SetWidth(width - 40 - 90)
+                item.text:ClearAllPoints()
+                item.text:SetPoint("TOPLEFT", 28, y)
+                item.link:ClearAllPoints()
+                item.link:SetPoint("TOPRIGHT", self, "TOPRIGHT", -20, y + 2)
+                y = y - item.text:GetStringHeight() - 8
+            else -- a version heading
+                item:ClearAllPoints()
+                item:SetPoint("TOPLEFT", 20, y)
+                y = y - item:GetStringHeight() - 8
+            end
+        end
+        gotIt:ClearAllPoints()
+        gotIt:SetPoint("TOPRIGHT", self, "TOPRIGHT", -20, y - 4)
+        self:SetHeight(-y + 4 + gotIt:GetHeight() + 20)
+    end
+    return card
+end
+
+-- Shows the card while there's news on the open page: on a settings page
+-- as its first card, scrolling with it; above the lists and the history,
+-- which aren't card pages, moving them down. Also the sidebar dots.
+local newsPage -- the page the card was put on
+function LayoutNews()
+    if not newsCard or not currentPage then return end
+    UpdateNewsDots()
+    for key, nav in pairs(navButtons) do nav.newDot:SetShown(ns.PageIsNew(key)) end
+    local news = ns.UnseenNews()
+    local page = pages[currentPage]
+    local offset = 0
+    newsCard:SetShown(#news > 0)
+    if #news > 0 then
+        newsCard:Fill(news)
+        if page.Restack then
+            newsCard:SetParent(page.content) -- placed by the page's Restack
+        else
+            newsCard:SetParent(window)
+            -- Lined up with the cards of the settings pages (left of their scrollbar).
+            newsCard:Relayout(window:GetWidth() - SIDEBAR_WIDTH - 2 - 16 - 40)
+            newsCard:ClearAllPoints()
+            newsCard:SetPoint("TOPLEFT", sidebarFrame, "TOPRIGHT", 20, -20)
+            offset = newsCard:GetHeight() + 20
+        end
+    end
+    page:ClearAllPoints()
+    page:SetPoint("TOPLEFT", sidebarFrame, "TOPRIGHT", 0, -offset)
+    page:SetPoint("BOTTOMRIGHT", -1, 1)
+    -- The page it was on closes the gap; this one makes room for it.
+    local previous = newsPage and pages[newsPage]
+    if previous and newsPage ~= currentPage then
+        previous:ClearAllPoints()
+        previous:SetPoint("TOPLEFT", sidebarFrame, "TOPRIGHT", 0, 0)
+        previous:SetPoint("BOTTOMRIGHT", -1, 1)
+        if previous.Restack then previous.Restack() end
+    end
+    if page.Restack then page.Restack() end
+    newsPage = currentPage
+end
+
 local function CreateWindow()
     window = CreateFrame("Frame", "PocketGoblinFrame", UIParent, "BackdropTemplate")
     local saved = PocketGoblinDB.window
@@ -3054,6 +3251,7 @@ local function CreateWindow()
     CreateHeader()
 
     local sidebar = CreateFrame("Frame", nil, window)
+    sidebarFrame = sidebar
     sidebar:SetPoint("TOPLEFT", 1, -HEADER_HEIGHT - 1)
     sidebar:SetPoint("BOTTOMLEFT", 1, 1)
     sidebar:SetWidth(SIDEBAR_WIDTH)
@@ -3084,7 +3282,12 @@ local function CreateWindow()
             BUILDERS[page.key](frame)
         end
     end
+    newsCard = CreateNewsCard(window)
+    newsCard:Hide()
+    window:HookScript("OnShow", LayoutNews)
+    window:HookScript("OnSizeChanged", LayoutNews)
     SelectPage("list")
+    LayoutNews()
     minHeight = HEADER_HEIGHT - y + 8 -- tall enough for the whole sidebar
     CreateResizeGrip()
 

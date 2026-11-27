@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+New:
+- **Tour**: a short tour for new players, in speech bubbles like Fanny Pack's. The first time your bags open, it points at an item with the coin (and Alt+Right-click), the trash can (and its hotkey), the open button and the window; the first time the vendor panel shows, at the panel. Closing the bags or the vendor, or a fight, pauses it until they're back. Play it again with **Show the tour** on the General page or `/goblin tour`
+- **What's new**: after an update with new features, one line in chat says what's new, and a card at the top of the window lists it, each point with a **Show me** link to its page, until you press **Got it**. A gold dot marks the pages and settings that changed. Turn the chat line off with **Tell me about new features** on the General page. A first install gets none of it
+
 ## 1.10.0
 
 New:

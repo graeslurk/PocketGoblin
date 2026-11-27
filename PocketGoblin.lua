@@ -1055,6 +1055,15 @@ local function ForEachBagButton(fn)
     end
 end
 
+-- An item in the open bags showing the coin, for the tour (Tour.lua).
+function ns.VisibleCoinItem()
+    local found
+    ForEachBagButton(function(button)
+        if not found and button.PocketGoblinIcon and button.PocketGoblinIcon:IsVisible() then found = button end
+    end)
+    return found or (ns.BagnonCoinItem and ns.BagnonCoinItem())
+end
+
 -- Batched to once per frame; also lets Blizzard finish updating the bags first.
 local function RefreshOverlays()
     if overlayPending or not db then return end
@@ -2217,6 +2226,7 @@ local function ShowHelp()
     print(L["  /goblin list - show your lists in chat"])
     print(L["  /goblin clear confirm - empty both lists"])
     print(L["  /goblin welcome - show the welcome window again"])
+    print(L["  /goblin tour - a short tour of your bags and the vendor panel"])
     print(L["  /goblin debug - details to copy into a bug report"])
 end
 
@@ -2312,6 +2322,8 @@ SlashCmdList.POCKETGOBLIN = function(msg)
         ns.ToggleWindow(true, "settings")
     elseif cmd == "welcome" then
         ns.ShowWelcome()
+    elseif cmd == "tour" then
+        ns.StartTour()
     elseif cmd == "debug" then
         Debug(arg:lower() == "chat")
     else
@@ -2832,7 +2844,8 @@ frame:RegisterEvent("PLAYER_LOGOUT")
 frame:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
         characterKey = UnitName("player") .. " - " .. GetRealmName()
-        MigrateSavedVariables()
+        ns.freshInstall = MigrateSavedVariables() -- no tour or "what's new" for existing installs
+        ns.account = PocketGoblinDB -- account-wide: the news and tour state (News.lua, Tour.lua)
         local name = PocketGoblinDB.profileKeys[characterKey]
         LoadProfile(PocketGoblinDB.profiles[name] and name or DEFAULT_PROFILE)
         charData = PocketGoblinDB.characters[characterKey] or {}
@@ -2858,6 +2871,8 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         ns.SetupDestroyButtons()
         ns.SetupSortButton()
         ns.SetupOpenButtons()
+        ns.InitNews()
+        ns.InitTour()
         RecordWorn()
         hooksecurefunc("BuybackItem", OnBuyback)
         hooksecurefunc("RepairAllItems", function(guildBank) guildRepairPending = guildBank and true or false end)

@@ -175,6 +175,7 @@ local function CreatePanel()
     panel:SetBackdropBorderColor(0.17, 0.17, 0.19, 1)
     panel:EnableMouse(true)
     panel:Hide()
+    panel:SetScript("OnShow", function() if ns.OnVendorPanelShown then ns.OnVendorPanelShown() end end)
 
     local logo = UI.Icon(panel, "emblem-mono", 22, C.gold)
     logo:SetPoint("TOPLEFT", 12, -11)

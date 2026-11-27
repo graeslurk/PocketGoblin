@@ -71,6 +71,8 @@ None of these are destroyed by the trash can or Make room either.
 - Or plain chat messages, only the summaries, or no chat at all
 - **Profiles**, per character, each with its own auto-sell and keep lists. Import another profile's lists into yours without copying its settings
 - **Share** your lists or a whole profile as text: paste it on another account, or give it to a friend
+- **A short tour** for new players: the first time your bags open, bubbles point at the coin, the trash can and the open button, and at your first vendor, at the vendor panel. `/goblin tour` plays it again
+- **What's new**: after an update with new features, a line in chat and a card at the top of the window say what's new, with a dot on the pages and settings that changed (the chat line can be turned off)
 
 ## Commands
 
@@ -83,6 +85,7 @@ None of these are destroyed by the trash can or Make room either.
 | `/goblin chat [goblin\|plain\|summaries\|none]` | Choose how the goblin talks in chat |
 | `/goblin profile [name]` | Show or switch this character's profile |
 | `/goblin welcome` | Show the welcome window again |
+| `/goblin tour` | A short tour of your bags and the vendor panel |
 | `/goblin debug` | Details to copy into a bug report |
 
 ## Reporting bugs

@@ -12,6 +12,7 @@ local PORTRAIT_GAP = 4 -- between the separate backpack's bag icon and the trash
 local ELLESMERE_COLOR = { 0.9, 0.9, 0.9, 1 }
 
 local buttons = {}
+ns.destroyButtons = buttons -- every trash can, for the tour (Tour.lua)
 local baganatorButton
 local popup
 
@@ -156,6 +157,7 @@ local function CreateDestroyButton(parent, size, blizzardStyle)
         GameTooltip_Hide()
     end)
     button:SetScript("OnShow", MatchParentLayer)
+    button:HookScript("OnShow", function() if ns.OnBagButtonShown then ns.OnBagButtonShown() end end)
 
     buttons[#buttons + 1] = button
     return button

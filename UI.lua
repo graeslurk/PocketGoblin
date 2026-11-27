@@ -64,6 +64,8 @@ local window
 local pages, navButtons, toggles = {}, {}, {}
 local currentPage
 local SelectPage -- defined with the window; pages use it for links
+local newsCard, sidebarFrame -- "What's new" on top of the open page (see CreateNewsCard)
+local LayoutNews -- defined with the news card
 local refreshPending = false
 
 -- List page widgets
@@ -209,6 +211,7 @@ local function SettingToggle(key, onChange)
             function(value)
                 ns.db[key] = value
                 if onChange then onChange() end
+                ns.RefreshWindow() -- dims or brightens the rows that depend on it
             end)
     end
 end
@@ -769,6 +772,27 @@ local function AddRow(card, title, description, makeControl)
     return { titleText, descText, control }
 end
 
+-- What's new on a setting: a gold dot after the title of the row just
+-- added, shown while a point on the What's new card names its key
+-- (point.setting in News.lua), so until "Got it".
+local newsDots = {} -- { dot, key }
+local function NewsDot(card, key)
+    local row = card.rows[#card.rows]
+    row.newsDot = Icon(card, "circle", 7, C.gold)
+    row.newsDot:Hide()
+    newsDots[#newsDots + 1] = { row.newsDot, key }
+end
+
+local function UpdateNewsDots()
+    local keys = {}
+    for _, entry in ipairs(ns.UnseenNews()) do
+        for _, point in ipairs(entry.points) do
+            if point.setting then keys[point.setting] = true end
+        end
+    end
+    for _, item in ipairs(newsDots) do item[1]:SetShown(keys[item[2]] or false) end
+end
+
 -- A row with its control under the text, for controls too wide to sit next
 -- to it. With notes (every text it can show), a line under the control that
 -- the caller fills with row.note:SetText; the row is as tall as the longest.
@@ -799,6 +823,13 @@ local function LayoutCard(card, width)
         end
 
         row.title:ClearAllPoints()
+        if row.newsDot then
+            -- Right after the title's text, level with its first line.
+            local _, fontHeight = row.title:GetFont()
+            row.newsDot:ClearAllPoints()
+            row.newsDot:SetPoint("LEFT", row.title, "TOPLEFT",
+                math.min(row.title:GetStringWidth(), textWidth) + 6, -(fontHeight or 14) / 2 - 1)
+        end
         if row.wide then
             row.title:SetPoint("TOPLEFT", 20, y)
             local rowHeight = textHeight
@@ -847,8 +878,18 @@ local function CreateCardPage(page, build)
     content:SetWidth(SCROLL_WIDTH)
 
     local cards = {}
+    local lastWidth
     local function stack(width)
+        width = width or lastWidth
+        lastWidth = width
         local y = -20
+        -- What's new, as the first card while it's on this page.
+        if newsCard and newsCard:IsShown() and newsCard:GetParent() == content then
+            newsCard:Relayout((width or SCROLL_WIDTH) - 40)
+            newsCard:ClearAllPoints()
+            newsCard:SetPoint("TOPLEFT", 20, y)
+            y = y - newsCard:GetHeight() - 16
+        end
         for _, card in ipairs(cards) do
             if width then LayoutCard(card, width - 40) end
             card:ClearAllPoints()
@@ -865,6 +906,7 @@ local function CreateCardPage(page, build)
     end
     build(addCard)
     stack()
+    page.content, page.Restack = content, function() stack() end
     scroll:HookScript("OnSizeChanged", function(_, width)
         if width > 0 then stack(width) end
     end)
@@ -1845,93 +1887,6 @@ local function BuildRulesPage(page)
             end)
         finish()
 
-        card, finish = addCard(L["Ask first"])
-        local askRow
-        local function showAskNote() askRow.note:SetText(ASK_NOTES[ns.db.askQuality] or "") end
-        askRow = AddWideRow(card, L["Ask before selling"],
-            L["Items a junk rule picks, like outgrown gear, aren't sold on their own: the vendor panel lists them "
-                .. "with Sell and Keep buttons, and they get a coin with a question mark in your bags. Items on your "
-                .. "auto-sell list never ask."],
-            function(parent)
-                local segmented = CreateSegmented(parent, ASK_QUALITIES,
-                    function() return ns.db.askQuality end,
-                    function(quality)
-                        ns.db.askQuality = quality
-                        ns.OnRulesChanged()
-                    end)
-                hooksecurefunc(segmented, "Update", showAskNote) -- also on a profile switch
-                return segmented
-            end,
-            { ASK_NOTES[2], ASK_NOTES[3], ASK_NOTES[4] })
-        showAskNote()
-        finish()
-
-        card, finish = addCard(L["Always keep"])
-        AddRow(card, L["Keep list"],
-            L["Items you never want sold. Alt+Right-click an item and choose \"Never sell\"."],
-            function(parent)
-                local open = CreateButton(parent, L["Keep list"], 110)
-                open:SetScript("OnClick", function()
-                    SetKeepTab("keep")
-                    SelectPage("keep")
-                end)
-                return open
-            end)
-        AddRow(card, L["Names containing"],
-            L["Items whose name contains one of these words, like potion or elixir. Separate them with commas "
-                .. "and press Enter."],
-            function(parent) return CreateWordsInput(parent) end)
-        AddRow(card, L["Item types"], L["Item types that are never sold."],
-            function(parent) return CreateTypePicker(parent) end)
-        finish()
-
-        card, finish = addCard(L["Kept automatically"])
-        AddRow(card, L["Quest gear"], L["Weapons and armor that quests ask for, listed on the Keep list page."],
-            SettingToggle("skipQuestGear", ns.OnRulesChanged))
-        AddRow(card, L["Upgrades"],
-            L["Gear better than what you wear, by Pawn if you have it, otherwise by item level. Never destroyed "
-                .. "either."],
-            SettingToggle("protectUpgrades", ns.OnRulesChanged))
-        AddRow(card, L["Gear you swap to"],
-            L["Green or better gear you've put on more than once in the last 30 days, like a resistance set or a "
-                .. "swap weapon. Gear you wore once and replaced, like while levelling, can still be sold."],
-            SettingToggle("keepWorn", ns.OnRulesChanged))
-        AddRow(card, L["Items to disenchant"],
-            L["On characters with Enchanting: green, blue and purple weapons and armor, so you can disenchant "
-                .. "them instead. Never destroyed either."],
-            SettingToggle("keepDisenchant", ns.OnRulesChanged))
-        AddRow(card, L["Valuable items"], L["Items worth more than the amount below."],
-            SettingToggle("keepValuable", ns.OnRulesChanged))
-        AddDependentRow(card, "keepValuable", L["Worth more than"],
-            L["Price per item. Drag, or type an amount like 1g or 50s."],
-            function(parent)
-                return CreateMoneyInput(parent, VALUABLE_LIMITS,
-                    function() return ns.db.keepValueLimit end,
-                    function(copper)
-                        ns.db.keepValueLimit = copper
-                        ns.OnRulesChanged()
-                    end)
-            end)
-        AddRow(card, L["Worth more at the auction house"],
-            L["Items that earn more at the auction house than at a vendor, also on your auto-sell list. Not "
-                .. "grey items. Needs Auctionator or TradeSkillMaster."],
-            SettingToggle("keepAuction", ns.OnRulesChanged))
-        AddDependentRow(card, "keepAuction", L["Extra profit"],
-            L["How much more an item has to earn there, after the auction house's 5% cut. Drag, or type an "
-                .. "amount like 10s."],
-            function(parent)
-                return CreateMoneyInput(parent, VALUABLE_LIMITS,
-                    function() return ns.db.auctionProfit end,
-                    function(copper)
-                        ns.db.auctionProfit = copper
-                        ns.OnRulesChanged()
-                    end)
-            end)
-        AddRow(card, L["Always protected"],
-            L["Items in an equipment set. Items on your auto-sell list still sell, whatever these rules say, "
-                .. "unless they're worth more at the auction house."])
-        finish()
-
         card, finish = addCard(L["Grey and white items"])
         AddRow(card, L["Sell grey items"],
             L["Every grey item is junk, unless you've put it on the keep list."],
@@ -2009,6 +1964,83 @@ local function BuildRulesPage(page)
             L["Recipes whose tooltip says \"Already known\"."],
             SettingToggle("sellKnownRecipes", ns.OnRulesChanged))
         finish()
+
+        card, finish = addCard(L["Ask first"])
+        local askRow
+        local function showAskNote() askRow.note:SetText(ASK_NOTES[ns.db.askQuality] or "") end
+        askRow = AddWideRow(card, L["Ask before selling"],
+            L["Items a junk rule picks, like outgrown gear, aren't sold on their own: the vendor panel lists them "
+                .. "with Sell and Keep buttons, and they get a coin with a question mark in your bags. Items on your "
+                .. "auto-sell list never ask."],
+            function(parent)
+                local segmented = CreateSegmented(parent, ASK_QUALITIES,
+                    function() return ns.db.askQuality end,
+                    function(quality)
+                        ns.db.askQuality = quality
+                        ns.OnRulesChanged()
+                    end)
+                hooksecurefunc(segmented, "Update", showAskNote) -- also on a profile switch
+                return segmented
+            end,
+            { ASK_NOTES[2], ASK_NOTES[3], ASK_NOTES[4] })
+        showAskNote()
+        finish()
+
+        card, finish = addCard(L["Always keep"])
+        AddRow(card, L["Names containing"],
+            L["Items whose name contains one of these words, like potion or elixir. Separate them with commas "
+                .. "and press Enter."],
+            function(parent) return CreateWordsInput(parent) end)
+        AddRow(card, L["Item types"], L["Item types that are never sold."],
+            function(parent) return CreateTypePicker(parent) end)
+        finish()
+
+        card, finish = addCard(L["Kept automatically"])
+        AddRow(card, L["Quest gear"], L["Weapons and armor that quests ask for, listed on the Keep list page."],
+            SettingToggle("skipQuestGear", ns.OnRulesChanged))
+        AddRow(card, L["Upgrades"],
+            L["Gear better than what you wear, by Pawn if you have it, otherwise by item level. Never destroyed "
+                .. "either."],
+            SettingToggle("protectUpgrades", ns.OnRulesChanged))
+        AddRow(card, L["Gear you swap to"],
+            L["Green or better gear you've put on more than once in the last 30 days, like a resistance set or a "
+                .. "swap weapon. Gear you wore once and replaced, like while levelling, can still be sold."],
+            SettingToggle("keepWorn", ns.OnRulesChanged))
+        AddRow(card, L["Items to disenchant"],
+            L["On characters with Enchanting: green, blue and purple weapons and armor, so you can disenchant "
+                .. "them instead. Never destroyed either."],
+            SettingToggle("keepDisenchant", ns.OnRulesChanged))
+        AddRow(card, L["Valuable items"], L["Items worth more than the amount below."],
+            SettingToggle("keepValuable", ns.OnRulesChanged))
+        AddDependentRow(card, "keepValuable", L["Worth more than"],
+            L["Price per item. Drag, or type an amount like 1g or 50s."],
+            function(parent)
+                return CreateMoneyInput(parent, VALUABLE_LIMITS,
+                    function() return ns.db.keepValueLimit end,
+                    function(copper)
+                        ns.db.keepValueLimit = copper
+                        ns.OnRulesChanged()
+                    end)
+            end)
+        AddRow(card, L["Worth more at the auction house"],
+            L["Items that earn more at the auction house than at a vendor, also on your auto-sell list. Not "
+                .. "grey items. Needs Auctionator or TradeSkillMaster."],
+            SettingToggle("keepAuction", ns.OnRulesChanged))
+        AddDependentRow(card, "keepAuction", L["Extra profit"],
+            L["How much more an item has to earn there, after the auction house's 5% cut. Drag, or type an "
+                .. "amount like 10s."],
+            function(parent)
+                return CreateMoneyInput(parent, VALUABLE_LIMITS,
+                    function() return ns.db.auctionProfit end,
+                    function(copper)
+                        ns.db.auctionProfit = copper
+                        ns.OnRulesChanged()
+                    end)
+            end)
+        AddRow(card, L["Always protected"],
+            L["Items in an equipment set. Items on your auto-sell list still sell, whatever these rules say, "
+                .. "unless they're worth more at the auction house."])
+        finish()
     end)
 end
 
@@ -2049,6 +2081,8 @@ local function BuildBagsPage(page)
         local card, finish = addCard(L["Bag icons"])
         AddRow(card, L["Coin icon on junk"], L["Show a coin in the corner of items that will be sold."],
             SettingToggle("showIcons", ns.OnRulesChanged))
+        AddRow(card, L["Grey out junk"], L["Fade and desaturate items that will be sold."],
+            SettingToggle("greyOut", ns.OnRulesChanged))
         AddRow(card, L["Lock on kept items"], L["Show a lock on items on your keep list, in the coin's size and corner."],
             SettingToggle("keepIcon", ns.OnRulesChanged))
         AddRow(card, L["Equipment set icon"],
@@ -2079,29 +2113,33 @@ local function BuildBagsPage(page)
                         ns.RefreshOverlays()
                     end)
             end)
-        AddRow(card, L["Grey out junk"], L["Fade and desaturate items that will be sold."],
-            SettingToggle("greyOut", ns.OnRulesChanged))
         AddRow(card, "Baganator",
             L["Baganator shows its own junk coin with Pocket Goblin's rules. If it doesn't, choose Pocket Goblin "
                 .. "as its junk plugin."])
         finish()
 
         card, finish = addCard(L["Bag buttons"])
-        AddRow(card, L["Sort button"], L["Stacks and sorts the default bags, junk last. Baganator has its own."],
+        AddRow(card, L["Sort button"],
+            L["Stacks and sorts the default bags, junk last. Other bag addons have their own."],
             SettingToggle("sortButton", ns.UpdateDestroyButtons)) -- moves both buttons
-        AddRow(card, L["Show open button"],
+        AddRow(card, L["Open button"],
             L["Opens clams, sacks and other containers, one per click. Also a hotkey."],
             SettingToggle("openButton", ns.UpdateOpenButtons))
-        AddRow(card, L["Show destroy button"],
-            L["A trash can that destroys your cheapest junk, the same items Pocket Goblin would sell. Hover it "
-                .. "to see what goes."],
+        AddRow(card, L["Trash can"],
+            L["Destroys your cheapest junk, the same items Pocket Goblin would sell. Hover it to see what goes. "
+                .. "Also a hotkey."],
             SettingToggle("destroyButton", ns.UpdateDestroyButtons))
-        AddRow(card, L["Ask before destroying"], L["Confirm the item and its value first."],
+        finish()
+
+        -- For everything that destroys: the trash can, its hotkey and Make room.
+        card, finish = addCard(L["Destroying junk"])
+        AddRow(card, L["Ask before destroying"],
+            L["Confirm the item and its value first, for the trash can, its hotkey and Make room."],
             SettingToggle("destroyConfirm"))
         AddRow(card, L["Protect valuable junk"],
             L["Never destroy junk worth more than the limit below, counting the whole stack."],
             SettingToggle("destroyProtect", ns.UpdateDestroyButtons))
-        dependentRows[#dependentRows + 1] = { AddRow(card, L["Value limit"],
+        AddDependentRow(card, "destroyProtect", L["Value limit"],
             L["Drag, or type an amount like 1s50c."],
             function(parent)
                 return CreateMoneyInput(parent, LIMITS,
@@ -2110,17 +2148,19 @@ local function BuildBagsPage(page)
                         ns.db.destroyLimit = copper
                         ns.UpdateDestroyButtons()
                     end)
-            end), "destroyProtect" }
+            end)
+        AddRow(card, L["Make room when looting"],
+            L["When your loot doesn't fit, a button under the loot window destroys your cheapest junk and loots, "
+                .. "in one click."],
+            SettingToggle("lootMakeRoom"))
+        NewsDot(card, "lootMakeRoom")
         finish()
 
-        card, finish = addCard(L["Full bags"])
-        AddRow(card, L["Make room when looting"],
-            L["A button under the loot window destroys your cheapest junk and loots, in one click."],
-            SettingToggle("lootMakeRoom"))
+        card, finish = addCard(L["Bag space"])
         AddRow(card, L["Warn when bags are nearly full"],
             L["The trash can turns red and shows the free slots, with a chat message."],
             SettingToggle("bagWarning", ns.UpdateDestroyButtons))
-        dependentRows[#dependentRows + 1] = { AddRow(card, L["Free slots"],
+        AddDependentRow(card, "bagWarning", L["Free slots"],
             L["Warn at this many free slots or fewer."],
             function(parent)
                 return CreateSlider(parent, 1, 10, 1, function() return ns.db.bagWarningSlots end,
@@ -2129,7 +2169,7 @@ local function BuildBagsPage(page)
                         ns.db.bagWarningSlots = math.floor(value + 0.5)
                         ns.UpdateDestroyButtons()
                     end)
-            end), "bagWarning" }
+            end)
         finish()
     end)
 end
@@ -2682,11 +2722,21 @@ local MESSAGE_NOTES = {
 local function BuildGeneralPage(page)
     CreateCardPage(page, function(addCard)
         local card, finish = addCard(L["Interface"])
-        AddRow(card, L["Show minimap button"], L["Left-click opens the list, right-click the settings."],
+        AddRow(card, L["Minimap button"], L["Left-click opens the list, right-click the settings."],
             SettingToggle("showMinimap", ns.UpdateMinimapButton))
         AddRow(card, L["Explain in tooltips"],
             L["Items in your bags say whether they'll be sold or kept, why, and what the stack sells for."],
             SettingToggle("tooltipValue"))
+        AddRow(card, L["Tour"], L["A short tour of your bags and the vendor panel, as after your first install."],
+            function(parent)
+                local button = CreateButton(parent, L["Show the tour"], 120)
+                button:SetScript("OnClick", function()
+                    window:Hide() -- the tour points at the bags
+                    ns.StartTour()
+                end)
+                return button
+            end)
+        NewsDot(card, "tour")
         finish()
 
         card, finish = addCard(L["Chat messages"])
@@ -2706,6 +2756,12 @@ local function BuildGeneralPage(page)
             end,
             { MESSAGE_NOTES.goblin, MESSAGE_NOTES.plain, MESSAGE_NOTES.summaries, MESSAGE_NOTES.none })
         showNote()
+        AddRow(card, L["Tell me about new features"],
+            L["After an update with new features, one line in chat says what's new. This window shows it either way."],
+            function(parent)
+                return CreateToggle(parent, function() return ns.account.newsChat ~= false end, ns.SetNewsChat)
+            end)
+        NewsDot(card, "newsChat")
         finish()
     end)
 end
@@ -2747,6 +2803,7 @@ local function BuildAboutPage(page)
             { "/goblin profile [name]", L["Show or switch this character's profile"] },
             { "/goblin clear confirm", L["Empty the auto-sell and keep lists"] },
             { "/goblin welcome", L["Show the welcome window again"] },
+            { "/goblin tour", L["A short tour of your bags and the vendor panel"] },
             { "/goblin debug", L["Details to copy into a bug report"] },
         }
         for _, command in ipairs(commands) do
@@ -2821,8 +2878,10 @@ function SelectPage(key)
         if alias[2] then SetKeepTab(alias[2]) end
     end
     currentPage = key
+    ns.MarkPageSeen(key)
     for _, page in ipairs(PAGES) do
         if page.key then
+            navButtons[page.key].newDot:SetShown(ns.PageIsNew(page.key))
             local selected = page.key == key
             pages[page.key]:SetShown(selected)
             local nav = navButtons[page.key]
@@ -2834,6 +2893,7 @@ function SelectPage(key)
         end
     end
     UpdateDropOverlay()
+    LayoutNews() -- What's new moves along to the page
     ns.RefreshWindow() -- the quest gear list only refreshes while it's shown
 end
 
@@ -2857,6 +2917,10 @@ local function CreateNavButton(parent, page, y)
 
     nav.title = Text(nav, 15, C.text)
     nav.title:SetText(page.title)
+    -- A gold dot while the page has news you haven't looked at.
+    nav.newDot = Icon(nav, "circle", 7, C.gold)
+    nav.newDot:SetPoint("LEFT", nav.title, "RIGHT", 6, 0)
+    nav.newDot:Hide()
 
     local subtitle = Text(nav, 11, C.muted)
     subtitle:SetPoint("TOPLEFT", nav.title, "BOTTOMLEFT", 0, -4)
@@ -3009,6 +3073,137 @@ local function CreateHeader()
     line:SetPoint("BOTTOMRIGHT", -1, 0)
 end
 
+------------------------------------------------------------------------
+-- What's new: after an update, a card above whichever page is open, with
+-- each release's points newest first, a "Show me" link to each one's page,
+-- and "Got it" to put it away until the next release with news
+-- (ns.WHATS_NEW, in News.lua). As Fanny Pack's.
+------------------------------------------------------------------------
+
+local NEWS_BULLET = "|T" .. MEDIA .. "circle:7:7:0:0:32:32:0:32:0:32:212:167:44|t  "
+local function CreateNewsCard(parent)
+    local card = CreateCard(parent, L["What's new"])
+    local headings, points = {}, {}
+    local shownHeadings, shownPoints = 0, 0
+
+    local gotIt = CreateButton(card, L["Got it"], 90, "primary")
+    gotIt:SetScript("OnClick", function()
+        ns.DismissNews()
+        LayoutNews()
+    end)
+
+    local function Heading(i)
+        if not headings[i] then headings[i] = Text(card, 12, C.gold) end
+        return headings[i]
+    end
+
+    local function Point(i)
+        if points[i] then return points[i] end
+        local point = {}
+        point.text = Text(card, 13, C.text)
+        point.link = CreateFrame("Button", nil, card)
+        point.link.label = Text(point.link, 12, C.gold)
+        point.link.label:SetPoint("RIGHT")
+        point.link.label:SetText(L["Show me"])
+        point.link:SetSize(point.link.label:GetStringWidth() + 4, 18)
+        point.link:SetScript("OnEnter", function(self) self.label:SetTextColor(C.goldHover[1], C.goldHover[2], C.goldHover[3]) end)
+        point.link:SetScript("OnLeave", function(self) self.label:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end)
+        point.link:SetScript("OnClick", function(self)
+            if self.page and pages[self.page] then SelectPage(self.page) end
+        end)
+        points[i] = point
+        return point
+    end
+
+    -- Puts the entries' text in place; Relayout positions it.
+    function card:Fill(news)
+        shownHeadings, shownPoints = 0, 0
+        self.order = {}
+        for _, entry in ipairs(news) do
+            shownHeadings = shownHeadings + 1
+            local heading = Heading(shownHeadings)
+            heading:SetText(L["Version %s"]:format(entry.version))
+            self.order[#self.order + 1] = heading
+            for _, info in ipairs(entry.points) do
+                shownPoints = shownPoints + 1
+                local point = Point(shownPoints)
+                point.text:SetText(NEWS_BULLET .. info.text)
+                point.link.page = info.page
+                point.link:SetShown(info.page ~= nil)
+                self.order[#self.order + 1] = point
+            end
+        end
+        for i, heading in ipairs(headings) do heading:SetShown(i <= shownHeadings) end
+        for i, point in ipairs(points) do
+            point.text:SetShown(i <= shownPoints)
+            if i > shownPoints then point.link:Hide() end
+        end
+    end
+
+    function card:Relayout(width)
+        self:SetWidth(width)
+        local y = -52
+        for _, item in ipairs(self.order or {}) do
+            if item.text then -- a point, with its link on the right
+                item.text:SetWidth(width - 40 - 90)
+                item.text:ClearAllPoints()
+                item.text:SetPoint("TOPLEFT", 28, y)
+                item.link:ClearAllPoints()
+                item.link:SetPoint("TOPRIGHT", self, "TOPRIGHT", -20, y + 2)
+                y = y - item.text:GetStringHeight() - 8
+            else -- a version heading
+                item:ClearAllPoints()
+                item:SetPoint("TOPLEFT", 20, y)
+                y = y - item:GetStringHeight() - 8
+            end
+        end
+        gotIt:ClearAllPoints()
+        gotIt:SetPoint("TOPRIGHT", self, "TOPRIGHT", -20, y - 4)
+        self:SetHeight(-y + 4 + gotIt:GetHeight() + 20)
+    end
+    return card
+end
+
+-- Shows the card while there's news on the open page: on a settings page
+-- as its first card, scrolling with it; above the lists and the history,
+-- which aren't card pages, moving them down. Also the sidebar dots.
+local newsPage -- the page the card was put on
+function LayoutNews()
+    if not newsCard or not currentPage then return end
+    UpdateNewsDots()
+    for key, nav in pairs(navButtons) do nav.newDot:SetShown(ns.PageIsNew(key)) end
+    local news = ns.UnseenNews()
+    local page = pages[currentPage]
+    local offset = 0
+    newsCard:SetShown(#news > 0)
+    if #news > 0 then
+        newsCard:Fill(news)
+        if page.Restack then
+            newsCard:SetParent(page.content) -- placed by the page's Restack
+        else
+            newsCard:SetParent(window)
+            -- Lined up with the cards of the settings pages (left of their scrollbar).
+            newsCard:Relayout(window:GetWidth() - SIDEBAR_WIDTH - 2 - 16 - 40)
+            newsCard:ClearAllPoints()
+            newsCard:SetPoint("TOPLEFT", sidebarFrame, "TOPRIGHT", 20, -20)
+            offset = newsCard:GetHeight() + 20
+        end
+    end
+    page:ClearAllPoints()
+    page:SetPoint("TOPLEFT", sidebarFrame, "TOPRIGHT", 0, -offset)
+    page:SetPoint("BOTTOMRIGHT", -1, 1)
+    -- The page it was on closes the gap; this one makes room for it.
+    local previous = newsPage and pages[newsPage]
+    if previous and newsPage ~= currentPage then
+        previous:ClearAllPoints()
+        previous:SetPoint("TOPLEFT", sidebarFrame, "TOPRIGHT", 0, 0)
+        previous:SetPoint("BOTTOMRIGHT", -1, 1)
+        if previous.Restack then previous.Restack() end
+    end
+    if page.Restack then page.Restack() end
+    newsPage = currentPage
+end
+
 local function CreateWindow()
     window = CreateFrame("Frame", "PocketGoblinFrame", UIParent, "BackdropTemplate")
     local saved = PocketGoblinDB.window
@@ -3054,6 +3249,7 @@ local function CreateWindow()
     CreateHeader()
 
     local sidebar = CreateFrame("Frame", nil, window)
+    sidebarFrame = sidebar
     sidebar:SetPoint("TOPLEFT", 1, -HEADER_HEIGHT - 1)
     sidebar:SetPoint("BOTTOMLEFT", 1, 1)
     sidebar:SetWidth(SIDEBAR_WIDTH)
@@ -3084,7 +3280,12 @@ local function CreateWindow()
             BUILDERS[page.key](frame)
         end
     end
+    newsCard = CreateNewsCard(window)
+    newsCard:Hide()
+    window:HookScript("OnShow", LayoutNews)
+    window:HookScript("OnSizeChanged", LayoutNews)
     SelectPage("list")
+    LayoutNews()
     minHeight = HEADER_HEIGHT - y + 8 -- tall enough for the whole sidebar
     CreateResizeGrip()
 

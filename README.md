@@ -51,7 +51,7 @@ None of these are destroyed by the trash can or Make room either.
 
 - **Alt+Right-click** any item to put it on the auto-sell list or the keep list
 - **Coin and lock icons** on junk and kept items, and a green **upgrade arrow** on better gear (with Pawn), in the default bags, Baganator, Bagnon and EllesmereUI's bags, plus **equipment set icons** in the default bags, Bagnon and EllesmereUI's
-- **Destroy button** for the cheapest junk, with a confirmation and a value limit
+- **Trash can** for when no vendor is near: destroys your cheapest junk, with a confirmation and a value limit for the whole stack. Also on a hotkey
 - **Make room** when your loot doesn't fit: a button on the loot window destroys your cheapest junk and loots, in one click
 - **Open containers**: a button (and a hotkey) opens clams, sacks of loot and other containers, one per click
 - The trash can and the open button sit on the default bags, Baganator, Bagnon and EllesmereUI's bags
@@ -71,6 +71,8 @@ None of these are destroyed by the trash can or Make room either.
 - Or plain chat messages, only the summaries, or no chat at all
 - **Profiles**, per character, each with its own auto-sell and keep lists. Import another profile's lists into yours without copying its settings
 - **Share** your lists or a whole profile as text: paste it on another account, or give it to a friend
+- **A short tour** for new players: the first time your bags open, bubbles point at the coin, the trash can and the open button, and at your first vendor, at the vendor panel. `/goblin tour` plays it again
+- **What's new**: after an update with new features, a line in chat and a card at the top of the window say what's new, with a dot on the pages and settings that changed (the chat line can be turned off)
 
 ## Commands
 
@@ -83,6 +85,7 @@ None of these are destroyed by the trash can or Make room either.
 | `/goblin chat [goblin\|plain\|summaries\|none]` | Choose how the goblin talks in chat |
 | `/goblin profile [name]` | Show or switch this character's profile |
 | `/goblin welcome` | Show the welcome window again |
+| `/goblin tour` | A short tour of your bags and the vendor panel |
 | `/goblin debug` | Details to copy into a bug report |
 
 ## Reporting bugs
@@ -97,7 +100,8 @@ Pocket Goblin is in English. Translations are welcome: see `Locales/` for how to
 
 Hi, I'm Graeslurk! I play WoW Forever and got tired of clicking through
 vendor windows to sell junk, so I built a goblin to do it for me. Pocket
-Goblin is my first addon, and I'm working on it in my spare time.
+Goblin was my first addon, and I'm working on it in my spare time. I also
+made Fanny Pack and Soul Warden.
 
 Bug reports and ideas are very welcome: open an issue on GitHub (include
 the text from `/goblin debug`).

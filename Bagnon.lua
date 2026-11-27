@@ -48,6 +48,15 @@ function ns.RefreshBagnon()
     end
 end
 
+-- An item showing the coin, for the tour (Tour.lua).
+function ns.BagnonCoinItem()
+    local frame = InventoryFrame()
+    local items = frame and rawget(frame, "ItemGroup")
+    for _, button in ipairs(items and items.buttons or {}) do
+        if button.PocketGoblinIcon and button.PocketGoblinIcon:IsVisible() then return button end
+    end
+end
+
 ------------------------------------------------------------------------
 -- Trash can and open button in the top row
 ------------------------------------------------------------------------

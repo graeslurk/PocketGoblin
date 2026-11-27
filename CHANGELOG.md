@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.11.0
+
+New:
+- **Tour**: a short tour for new players, in speech bubbles like Fanny Pack's. The first time your bags open, it points at an item with the coin (and Alt+Right-click), the trash can (and its hotkey), the open button and the window; the first time the vendor panel shows, at the panel. Closing the bags or the vendor, or a fight, pauses it until they're back. Play it again with **Show the tour** on the General page or `/goblin tour`
+- **What's new**: after an update with new features, one line in chat says what's new, and a card at the top of the window lists it, each point with a **Show me** link to its page, until you press **Got it**. A gold dot marks the pages and settings that changed. Turn the chat line off with **Tell me about new features** on the General page. A first install gets none of it
+
+Changed:
+- **Tidier settings**. **Junk rules** starts with what gets sold (grey and white items, food and drink, soulbound gear, recipes), then what's asked about and kept; the Keep list row is gone, as the sidebar has the page. **Bags** has four cards: Bag icons (with Grey out junk next to the coin), Bag buttons (Sort, Open, Trash can), **Destroying junk** (Ask before destroying and the value limit, which also cover the hotkey and Make room, with Make room itself) and Bag space. On **General**, Tell me about new features moved to Chat messages. Nothing changes what it does
+
+Fixed:
+- Settings that depend on another (the destroy value limit, the bag warning's free slots, the other junk sellers warning, guild repairs) now dim as soon as you switch that one off, not only when the window is opened again
+
 ## 1.10.0
 
 New:

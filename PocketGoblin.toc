@@ -25,3 +25,5 @@ Ellesmere.lua
 Bagnon.lua
 BagSort.lua
 MerchantPanel.lua
+News.lua
+Tour.lua

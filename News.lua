@@ -13,6 +13,19 @@ local L = ns.L
 -- a dot.
 ns.WHATS_NEW = {
     {
+        version = "1.12.0",
+        chat = L["a breakdown of what you sell with gold per day, and a search for your vendor visits"],
+        points = {
+            { text = L["What you sold: on the History page, see which kinds of items and which junk rules earn you the most gold, your top items, and your gold per day."],
+                page = "history" },
+            { text = L["Search your vendor visits for an item or a vendor, and fold visits away."],
+                page = "history" },
+            { text = L["Characters: forget a character you deleted, or merge one the game listed twice after renaming its realm."],
+                page = "general", setting = "characters" },
+            { text = L["Buy back something Pocket Goblin sold twice, and the vendor panel offers to keep it from then on."] },
+        },
+    },
+    {
         version = "1.11.0",
         chat = L["a short tour of your bags and the vendor panel, and this news"],
         points = {

@@ -44,8 +44,8 @@ None of these are destroyed by the trash can or Make room either.
 - **Sells your junk** as soon as you open a vendor, 12 at a time so every sale can be bought back
 - **Vendor panel** next to the vendor window: *Sell junk*, the items waiting for your OK, and buyback of anything you sold, one item at a time or all at once
 - **Auto-repair**, optionally from guild funds
-- **Suggestions**: sell the same item yourself a few times and your goblin offers to auto-sell it
-- **Warns** when another addon (Naowh Forever, Leatrix Plus, Scrap and others) also sells junk at vendors, since two sellers can sell what you meant to keep
+- **Suggestions**: sell the same item yourself a few times and your goblin offers to auto-sell it; buy back something it sold twice and it offers to keep it
+- **Warns** when another addon (Naowh Forever, RestedXP Guides, Leatrix Plus, Scrap and others) also sells junk at vendors, since two sellers can sell what you meant to keep
 
 ## In your bags
 
@@ -61,8 +61,11 @@ None of these are destroyed by the trash can or Make room either.
 
 ## The goblin's ledger
 
-- **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs
+- **History** of every vendor visit: what was sold (by the goblin or by you), buybacks and repairs, with a search for items and vendors and visits that fold away
+- **What you sold**: every vendor sale added up by item type, quality or the junk rule that sold it, with the gold and share of each and your top items. Pick today, the last 7 or 14 days or all time, for one character or all of them
+- **Gold per day**: a chart of your sales and repairs over the last 14 days. Hover a day for its net, click it to see what sold
 - **Earnings** this session, today, per character and across all characters
+- **Characters**: forget one you deleted, or merge one the game listed twice after renaming its realm
 - **Repair costs and net profit** for the same periods: what you sold minus what you paid to repair. Hover for the full breakdown and your most expensive repair
 
 ## Your goblin, your way

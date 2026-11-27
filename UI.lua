@@ -1169,7 +1169,7 @@ local function CreateChip(parent, label, dotColor, onToggle)
     return chip
 end
 
-local function CreateSearchBox(parent, onChange)
+local function CreateSearchBox(parent, onChange, placeholderText)
     local search = CreateFrame("EditBox", nil, parent)
     search:SetSize(200, 30)
     search:SetAutoFocus(false)
@@ -1182,7 +1182,7 @@ local function CreateSearchBox(parent, onChange)
     icon:SetPoint("LEFT", 10, 0)
     local placeholder = Text(search, 13, C.muted)
     placeholder:SetPoint("LEFT", 30, 0)
-    placeholder:SetText(L["Search items"])
+    placeholder:SetText(placeholderText or L["Search items"])
     search:SetScript("OnEscapePressed", search.ClearFocus)
     search:SetScript("OnEnterPressed", search.ClearFocus)
     search:SetScript("OnEditFocusGained", function() SetColor(border, C.gold) end)
@@ -2282,7 +2282,18 @@ local function CreateHistoryRow(index)
     row.name = Text(row, 13, C.text)
     row.name:SetWordWrap(false)
 
+    -- A visit's header folds its items away and back (not while searching).
+    row.chevron = Icon(row, "icon-chevron", 12, C.muted)
+    row.chevron:SetPoint("LEFT", 10, 0)
+    row:SetScript("OnClick", function(self)
+        if not self.visit or history.search ~= "" then return end
+        PlayToggleSound(true)
+        history.expanded[self.visit] = not self.open
+        ns.RefreshWindow()
+    end)
+
     row:SetScript("OnEnter", function(self)
+        if self.visit and history.search == "" then hover:Show() end
         if not self.sold then return end
         hover:Show()
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -2300,9 +2311,14 @@ local function UpdateHistoryRow(row, entry)
     row.name:ClearAllPoints()
     row.detail:ClearAllPoints()
 
+    row.visit = entry.visit
+    row.open = entry.open
+    row.chevron:SetShown(entry.visit ~= nil)
     if entry.visit then
         local visit = entry.visit
         row.sold = nil
+        -- Pointing down when open, right when folded.
+        row.chevron:SetRotation(entry.open and 0 or math.pi / 2)
         row.band:Show()
         row.border:Hide()
         row.icon:Hide()
@@ -2311,9 +2327,11 @@ local function UpdateHistoryRow(row, entry)
         row.source:Hide()
         row:SetAlpha(1)
         row.detail:SetPoint("RIGHT", -10, 0)
-        row.detail:SetText(entry.total > 0 and FormatMoney(entry.total) or "")
+        local count = entry.count == 1 and L["1 item"] or L["%s items"]:format(entry.count)
+        row.detail:SetText((entry.count > 0 and "|cff8a8b93" .. count .. "|r   " or "")
+            .. (entry.total > 0 and FormatMoney(entry.total) or ""))
         row.detail:SetTextColor(C.text[1], C.text[2], C.text[3])
-        row.name:SetPoint("LEFT", 10, 0)
+        row.name:SetPoint("LEFT", 28, 0)
         row.name:SetPoint("RIGHT", row.detail, "LEFT", -10, 0)
         row.name:SetText(VisitTime(visit.time) .. (visit.vendor and ("  |cff8a8b93" .. visit.vendor .. "|r") or ""))
         row.name:SetTextColor(C.text[1], C.text[2], C.text[3])
@@ -2375,6 +2393,597 @@ local function UpdateHistoryRow(row, entry)
     row.source:SetShown(byYou)
     row.name:SetPoint("LEFT", row.border, "RIGHT", 8, 0)
     row.name:SetPoint("RIGHT", byYou and row.source or row.detail, "LEFT", -10, 0)
+end
+
+------------------------------------------------------------------------
+-- What you sold: the History page's other view. Every vendor sale in a
+-- period (GetItemSales), grouped by item type or quality, as bars with
+-- their gold, item count and share; under them the items that made the
+-- most, for one group after a click on it.
+------------------------------------------------------------------------
+
+local SOLD_PERIODS = {
+    { "today", L["Today"] }, { "week", L["Last 7 days"] }, { "fortnight", L["Last 14 days"] }, { "all", L["All time"] },
+}
+local SOLD_WHO = { { "character", L["This character"] }, { "account", L["All characters"] } }
+local SOLD_GROUPS = { { "type", L["Type"] }, { "quality", L["Quality"] }, { "rule", L["Rule"] } }
+local function SoldFilter()
+    local filter = ns.db.filters.history
+    -- Before the period and the characters were two choices, period held both.
+    if filter.period == "account" or filter.period == "character" then
+        filter.who, filter.period = filter.period, "all"
+    end
+    return filter
+end
+-- The view's helpers live in this block (UI.lua is close to Lua's limit of
+-- 200 locals at the top of a file).
+local RefreshSold, BuildSoldView
+do
+    local GROUP_HEIGHT = 30
+    local TOP_ITEMS = 15
+    local MISC, JUNK_SUBCLASS = 15, 0 -- Miscellaneous > Junk: most greys
+
+    -- Items this game doesn't know (sold on a beta or another version of the
+    -- game, from a copied WTF folder) are left out.
+    local function KnownItem(itemID)
+        return C_Item.GetItemInfoInstant(itemID) ~= nil
+    end
+
+    -- The group an item falls in, and that group's name and bar color.
+    local function GroupOf(itemID, entry, group)
+        if group == "quality" then
+            local quality = entry.quality or select(3, C_Item.GetItemInfo(itemID))
+            return quality or "unknown"
+        end
+        local _, _, _, _, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
+        if classID == MISC and subClassID == JUNK_SUBCLASS then return "junk" end
+        return classID or "unknown"
+    end
+
+    -- The Rule view's groups: the junk rules (REASONS keys), "you" and
+    -- "earlier", each with a name and what it means (on hover).
+    local RULES = {
+        flagged = { L["Auto-sell list"], L["Items on your auto-sell list."] },
+        grey = { L["Grey items"], L["Grey items, under Grey and white items on the Junk rules page."] },
+        whiteGear = { L["White gear"], L["White weapons and armor, from the level you choose."] },
+        cheap = { L["Cheap white items"], L["White items worth less than the limit you set."] },
+        oldFood = { L["Old food & drink"], L["Food and drink you've outgrown: you carry better."] },
+        unusable = { L["Unusable gear"], L["Gear your class can never use, like plate on a mage: white gear, and soulbound gear."] },
+        outgrown = { L["Outgrown gear"], L["Soulbound gear whose required level is far below yours."] },
+        lighterArmor = { L["Lighter armor"], L["Soulbound armor lighter than the kind you wear."] },
+        knownRecipe = { L["Known recipes"], L["Recipes you already know."] },
+        you = { L["You or an addon"], L["Sold by you, or by another addon that sells junk."] },
+        earlier = { L["Earlier sales"], L["Pocket Goblin's sales from before it saved which rule sold them."] },
+    }
+
+    -- An item's totals as the pieces its group(s) get: one for Type and
+    -- Quality, one per rule (and what's from before rules) for Rule.
+    local function Pieces(itemID, entry, group)
+        if group ~= "rule" then
+            return { { key = GroupOf(itemID, entry, group), value = entry.value, count = entry.count } }
+        end
+        local pieces, value, count = {}, entry.value, entry.count
+        for rule, part in pairs(entry.rules or {}) do
+            pieces[#pieces + 1] = { key = RULES[rule] and rule or "earlier", value = part.value, count = part.count }
+            value, count = value - part.value, count - part.count
+        end
+        if value > 0 and count > 0 then pieces[#pieces + 1] = { key = "earlier", value = value, count = count } end
+        return pieces
+    end
+
+    local function GroupLabel(key, group)
+        if group == "rule" then return RULES[key] and RULES[key][1] or L["Unknown"] end
+        if key == "unknown" then return L["Unknown"] end
+        if group == "quality" then return _G["ITEM_QUALITY" .. key .. "_DESC"] or (L["Quality "] .. key) end
+        if key == "junk" then return ItemSubClassName(MISC, JUNK_SUBCLASS) end
+        return ItemClassName(key)
+    end
+
+    local function GroupColor(key, group)
+        if group == "quality" and key ~= "unknown" then return QualityColor(key) end
+        if group == "rule" and (key == "you" or key == "earlier") then return C.muted end
+        return C.gold
+    end
+
+    local function ItemCount(count)
+        return count == 1 and L["1 item"] or L["%s items"]:format(BreakUpLargeNumbers and BreakUpLargeNumbers(count) or count)
+    end
+
+    local function Share(value, total)
+        if total <= 0 then return "" end
+        local percent = value / total * 100
+        if percent > 0 and percent < 1 then return "<1%" end
+        return math.floor(percent + 0.5) .. "%"
+    end
+
+    -- A group's row: name, a bar as long as its share of the biggest group,
+    -- gold, item count and share. Click to show its top items.
+    local function CreateGroupRow(content)
+        local row = CreateFrame("Button", nil, content)
+        row:SetHeight(GROUP_HEIGHT)
+        row.selected = Rounded(row, "BACKGROUND", C.goldDim)
+        local hover = Rounded(row, "BACKGROUND", { 1, 1, 1, 0.045 })
+        hover:Hide()
+
+        row.name = Text(row, 13, C.text)
+        row.name:SetPoint("LEFT", 10, 0)
+        row.name:SetWidth(150)
+        row.name:SetWordWrap(false)
+
+        row.share = Text(row, 12, C.muted)
+        row.share:SetPoint("RIGHT", -10, 0)
+        row.share:SetWidth(40)
+        row.share:SetJustifyH("RIGHT")
+        row.count = Text(row, 12, C.muted)
+        row.count:SetPoint("RIGHT", row.share, "LEFT", -6, 0)
+        row.count:SetWidth(84)
+        row.count:SetJustifyH("RIGHT")
+        row.gold = Text(row, 13, C.text)
+        row.gold:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
+        row.gold:SetWidth(110)
+        row.gold:SetJustifyH("RIGHT")
+
+        -- The track is a frame, so the bar follows the window's width.
+        local track = CreateFrame("Frame", nil, row)
+        track:SetHeight(8)
+        track:SetPoint("LEFT", 170, 0)
+        track:SetPoint("RIGHT", row.gold, "LEFT", -16, 0)
+        local trackBg = track:CreateTexture(nil, "ARTWORK")
+        trackBg:SetAllPoints()
+        trackBg:SetColorTexture(1, 1, 1, 0.05)
+        row.fill = track:CreateTexture(nil, "ARTWORK", nil, 1)
+        row.fill:SetPoint("TOPLEFT")
+        row.fill:SetPoint("BOTTOMLEFT")
+        track.fraction = 0
+        function row:SetFraction(fraction)
+            track.fraction = fraction
+            row.fill:SetWidth(math.max(1, track:GetWidth() * fraction))
+        end
+        track:SetScript("OnSizeChanged", function(self, width)
+            row.fill:SetWidth(math.max(1, width * self.fraction))
+        end)
+
+        row:SetScript("OnEnter", function(self)
+            hover:Show()
+            if self.tip then ShowTooltip(self, self.name:GetText(), self.tip) end
+        end)
+        row:SetScript("OnLeave", function()
+            hover:Hide()
+            GameTooltip_Hide()
+        end)
+        row:SetScript("OnClick", function(self)
+            PlayToggleSound(true)
+            history.selectedGroup = history.selectedGroup ~= self.key and self.key or nil
+            ns.RefreshWindow()
+        end)
+        return row
+    end
+
+    -- Gold per day: the last 14 days as bars, what sold in gold and the
+    -- repairs you paid in red, each day's sales, repairs and net on hover.
+    -- Click a day to see what it sold; days outside the period are dimmed.
+    local PLOT_HEIGHT = 80
+    local CHART_HEIGHT = 32 + PLOT_HEIGHT + 22
+
+    local function DayTime(day)
+        local year, month, date_ = day:match("^(%d+)-(%d+)-(%d+)$")
+        return time({ year = tonumber(year), month = tonumber(month), day = tonumber(date_), hour = 12 })
+    end
+
+    local function CreateDayChart(parent)
+        local chart = CreateFrame("Frame", nil, parent)
+        chart:SetHeight(CHART_HEIGHT)
+        local title = Text(chart, 11, C.muted)
+        title:SetPoint("TOPLEFT", 10, 0)
+        title:SetText(L["GOLD PER DAY"])
+
+        -- Legend, on the right.
+        local repairsText = Text(chart, 11, C.muted)
+        repairsText:SetPoint("TOPRIGHT", -10, 0)
+        repairsText:SetText(L["Repairs"])
+        local repairsSwatch = chart:CreateTexture(nil, "ARTWORK")
+        repairsSwatch:SetSize(8, 8)
+        repairsSwatch:SetColorTexture(REPAIR_COLOR[1], REPAIR_COLOR[2], REPAIR_COLOR[3], 1)
+        repairsSwatch:SetPoint("RIGHT", repairsText, "LEFT", -5, 0)
+        local salesText = Text(chart, 11, C.muted)
+        salesText:SetPoint("RIGHT", repairsSwatch, "LEFT", -12, 0)
+        salesText:SetText(L["Sales"])
+        local salesSwatch = chart:CreateTexture(nil, "ARTWORK")
+        salesSwatch:SetSize(8, 8)
+        salesSwatch:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 1)
+        salesSwatch:SetPoint("RIGHT", salesText, "LEFT", -5, 0)
+
+        local plot = CreateFrame("Frame", nil, chart)
+        plot:SetPoint("TOPLEFT", 10, -32)
+        plot:SetPoint("TOPRIGHT", -10, -32)
+        plot:SetHeight(PLOT_HEIGHT)
+        local topLine = plot:CreateTexture(nil, "BACKGROUND")
+        topLine:SetColorTexture(1, 1, 1, 0.05)
+        topLine:SetHeight(1)
+        topLine:SetPoint("TOPLEFT")
+        topLine:SetPoint("TOPRIGHT")
+        local baseline = plot:CreateTexture(nil, "BACKGROUND")
+        baseline:SetColorTexture(1, 1, 1, 0.12)
+        baseline:SetHeight(1)
+        baseline:SetPoint("BOTTOMLEFT")
+        baseline:SetPoint("BOTTOMRIGHT")
+        -- The top line's value.
+        chart.maxLabel = Text(chart, 10, C.muted)
+        chart.maxLabel:SetPoint("BOTTOMLEFT", plot, "TOPLEFT", 0, 3)
+
+        -- The period's days: a gold band behind them, a line along its top
+        -- and the period's name above it (not for the whole 14 days).
+        local band = plot:CreateTexture(nil, "BACKGROUND", nil, -1)
+        band:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.08)
+        local bandLine = plot:CreateTexture(nil, "BORDER")
+        bandLine:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.8)
+        bandLine:SetHeight(2)
+        bandLine:SetPoint("BOTTOMLEFT", band, "TOPLEFT")
+        bandLine:SetPoint("BOTTOMRIGHT", band, "TOPRIGHT")
+        local bandLabel = Text(chart, 10, C.gold)
+        bandLabel:SetPoint("BOTTOM", bandLine, "TOP", 0, 3)
+
+        local columns = {}
+        local days, biggest = {}, 0
+        local function ShowDay(column)
+            local day = days[column.index]
+            if not day then return end
+            GameTooltip:SetOwner(column, "ANCHOR_TOP")
+            GameTooltip:SetText(date("%A, %b %d", day.time), 1, 1, 1)
+            local function line(label, text, color)
+                GameTooltip:AddDoubleLine(label, text, 0.7, 0.7, 0.7, color[1], color[2], color[3])
+            end
+            line(L["Sales"], FormatMoney(day.sales), C.text)
+            line(L["Repairs"], day.repairs > 0 and "-" .. FormatMoney(day.repairs) or "0", REPAIR_COLOR)
+            local net = day.sales - day.repairs
+            line(L["Net"], FormatNet(net), net < 0 and REPAIR_COLOR or PROFIT_COLOR)
+            if day.sales > 0 then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine(history.selectedDay == day.day and L["Click again to see the whole period."]
+                    or L["Click to see what sold this day."], 0.53, 0.54, 0.58)
+            end
+            GameTooltip:Show()
+        end
+
+        for i = 1, 14 do
+            local column = CreateFrame("Button", nil, plot)
+            column.index = i
+            column.band = column:CreateTexture(nil, "BACKGROUND")
+            column.band:SetAllPoints()
+            column.band:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.1)
+            column.band:Hide()
+            column.hover = column:CreateTexture(nil, "BACKGROUND", nil, 1)
+            column.hover:SetAllPoints()
+            column.hover:SetColorTexture(1, 1, 1, 0.04)
+            column.hover:Hide()
+            column.sales = column:CreateTexture(nil, "ARTWORK")
+            column.sales:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.9)
+            column.repairs = column:CreateTexture(nil, "ARTWORK")
+            column.repairs:SetColorTexture(REPAIR_COLOR[1], REPAIR_COLOR[2], REPAIR_COLOR[3], 0.9)
+            column.label = Text(chart, 10, C.muted)
+            column.label:SetPoint("TOP", column, "BOTTOM", 0, -5)
+            column:SetScript("OnEnter", function(self)
+                self.hover:Show()
+                ShowDay(self)
+            end)
+            column:SetScript("OnLeave", function(self)
+                self.hover:Hide()
+                GameTooltip_Hide()
+            end)
+            column:SetScript("OnClick", function(self)
+                local day = days[self.index]
+                if not day or day.sales <= 0 then return end
+                PlayToggleSound(true)
+                history.selectedDay = history.selectedDay ~= day.day and day.day or nil
+                history.selectedGroup = nil
+                ns.RefreshWindow()
+                if self:IsMouseOver() then ShowDay(self) end
+            end)
+            columns[i] = column
+        end
+
+        -- Places the columns and sizes the bars for the plot's width.
+        local function Layout()
+            local width = plot:GetWidth()
+            if not width or width <= 0 then return end
+            local step = width / #columns
+            local barWidth = math.max(3, math.floor((step - 8) / 2))
+            for i, column in ipairs(columns) do
+                column:ClearAllPoints()
+                column:SetPoint("BOTTOMLEFT", plot, "BOTTOMLEFT", (i - 1) * step, 0)
+                column:SetSize(step, PLOT_HEIGHT)
+                local day = days[i]
+                local function bar(texture, value, point, x)
+                    texture:SetShown(value > 0 and biggest > 0)
+                    if value > 0 and biggest > 0 then
+                        texture:ClearAllPoints()
+                        texture:SetPoint(point, column, "BOTTOM", x, 0)
+                        texture:SetSize(barWidth, math.max(2, PLOT_HEIGHT * value / biggest))
+                    end
+                end
+                bar(column.sales, day and day.sales or 0, "BOTTOMRIGHT", -1)
+                bar(column.repairs, day and day.repairs or 0, "BOTTOMLEFT", 1)
+            end
+        end
+        plot:SetScript("OnSizeChanged", Layout)
+
+        -- days: GetDays; shown: how many of the last days are in the period,
+        -- periodName: its name over the band.
+        function chart:SetDays(newDays, shown, selectedDay, periodName)
+            days, biggest = newDays, 0
+            for _, day in ipairs(days) do biggest = math.max(biggest, day.sales, day.repairs) end
+            self.maxLabel:SetText(biggest > 0 and FormatMoney(biggest) or "")
+            for i, column in ipairs(columns) do
+                local day = days[i]
+                local lit
+                if selectedDay then lit = day ~= nil and selectedDay == day.day else lit = i > #columns - shown end
+                column:SetAlpha(lit and 1 or 0.25)
+                column.band:SetShown(day ~= nil and selectedDay == day.day)
+                column.label:SetText(day and (i == #columns and L["Today"] or tonumber(date("%d", day.time))) or "")
+                local color = lit and C.text or C.muted
+                column.label:SetTextColor(color[1], color[2], color[3])
+                column.label:SetAlpha(lit and 1 or 0.6)
+            end
+            -- The band only marks part of the chart, and not while a day is picked.
+            local banded = not selectedDay and shown < #columns
+            band:SetShown(banded)
+            bandLine:SetShown(banded)
+            bandLabel:SetShown(banded)
+            if banded then
+                band:ClearAllPoints()
+                band:SetPoint("TOPLEFT", columns[#columns - shown + 1], "TOPLEFT")
+                band:SetPoint("BOTTOMRIGHT", plot, "BOTTOMRIGHT")
+                bandLabel:SetText(periodName:upper())
+            end
+            Layout()
+            return biggest
+        end
+        return chart
+    end
+
+    -- One of the top items: icon with its quality border, name, how many and gold.
+    local function CreateTopItemRow(content)
+        local row = CreateFrame("Button", nil, content)
+        row:SetHeight(ITEM_HEIGHT)
+        local hover = Rounded(row, "BACKGROUND", { 1, 1, 1, 0.045 })
+        hover:Hide()
+        row.border = row:CreateTexture(nil, "ARTWORK", nil, 1)
+        row.border:SetSize(22, 22)
+        row.border:SetPoint("LEFT", 10, 0)
+        row.icon = row:CreateTexture(nil, "ARTWORK", nil, 2)
+        row.icon:SetSize(20, 20)
+        row.icon:SetPoint("CENTER", row.border)
+        row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        row.gold = Text(row, 12, C.text)
+        row.gold:SetPoint("RIGHT", -10, 0)
+        row.gold:SetJustifyH("RIGHT")
+        row.count = Text(row, 12, C.muted)
+        row.count:SetPoint("RIGHT", -136, 0)
+        row.count:SetJustifyH("RIGHT")
+        row.name = Text(row, 13, C.text)
+        row.name:SetPoint("LEFT", row.border, "RIGHT", 8, 0)
+        row.name:SetPoint("RIGHT", row.count, "LEFT", -10, 0)
+        row.name:SetWordWrap(false)
+
+        row:SetScript("OnEnter", function(self)
+            hover:Show()
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink("item:" .. self.itemID)
+            GameTooltip:Show()
+        end)
+        row:SetScript("OnLeave", function()
+            hover:Hide()
+            GameTooltip_Hide()
+        end)
+        return row
+    end
+
+    function RefreshSold()
+        local sold = history.sold
+        local filter = SoldFilter()
+        local group = filter.group
+        -- The chart first: a selected day must be one of its days.
+        local allCharacters = filter.who == "account"
+        local days = ns.GetDays(allCharacters)
+        local known = false
+        for _, day in ipairs(days) do known = known or day.day == history.selectedDay end
+        if not known then history.selectedDay = nil end
+        local selectedDay = history.selectedDay
+        local shown = filter.period == "today" and 1 or filter.period == "week" and 7 or #days
+        local periodName
+        for _, option in ipairs(SOLD_PERIODS) do
+            if option[1] == filter.period then periodName = option[2] end
+        end
+        local chartMax = sold.chart:SetDays(days, shown, selectedDay, periodName or "")
+
+        local totals, since = ns.GetItemSales(filter.period, allCharacters, selectedDay)
+        -- The rows span the content; make sure it has the scroll area's width.
+        local width = sold.scroll:GetWidth()
+        if width and width > 1 then sold.content:SetWidth(width) end
+
+        -- Add up the groups, and list the items of the selected one.
+        local groups, byKey = {}, {}
+        local totalValue, totalCount = 0, 0
+        local piecesOf = {} -- [itemID] = Pieces()
+        for itemID, entry in pairs(totals) do
+            if entry.value > 0 and KnownItem(itemID) then
+                piecesOf[itemID] = Pieces(itemID, entry, group)
+                for _, piece in ipairs(piecesOf[itemID]) do
+                    local g = byKey[piece.key]
+                    if not g then
+                        g = { key = piece.key, value = 0, count = 0 }
+                        byKey[piece.key] = g
+                        groups[#groups + 1] = g
+                    end
+                    g.value = g.value + piece.value
+                    g.count = g.count + piece.count
+                end
+                totalValue = totalValue + entry.value
+                totalCount = totalCount + entry.count
+            end
+        end
+        table.sort(groups, function(a, b)
+            if a.value ~= b.value then return a.value > b.value end
+            return tostring(a.key) < tostring(b.key)
+        end)
+        if history.selectedGroup ~= nil and not byKey[history.selectedGroup] then history.selectedGroup = nil end
+        local selected = history.selectedGroup
+
+        -- Each item with what it made: all of it, or its piece in the selected group.
+        local items = {}
+        for itemID, pieces in pairs(piecesOf) do
+            local entry = totals[itemID]
+            if selected == nil then
+                items[#items + 1] = { itemID = itemID, value = entry.value, count = entry.count, quality = entry.quality }
+            else
+                for _, piece in ipairs(pieces) do
+                    if piece.key == selected then
+                        items[#items + 1] = { itemID = itemID, value = piece.value, count = piece.count,
+                            quality = entry.quality }
+                    end
+                end
+            end
+        end
+        table.sort(items, function(a, b)
+            if a.value ~= b.value then return a.value > b.value end
+            return a.itemID < b.itemID
+        end)
+
+        -- With nothing at all to show, the empty message takes the whole view.
+        local nothing = #groups == 0 and chartMax == 0
+        sold.empty:SetShown(nothing)
+        sold.summary:SetShown(not nothing)
+        sold.chart:SetShown(not nothing)
+        sold.topTitle:SetShown(#groups > 0)
+        local summary = #groups == 0 and L["Nothing sold in this period"]
+            or L["%s for %s"]:format(ItemCount(totalCount), FormatMoney(totalValue))
+        if selectedDay then summary = date("%A, %b %d", DayTime(selectedDay)) .. ":  " .. summary end
+        sold.summary:SetText(summary)
+
+        sold.chart:ClearAllPoints()
+        sold.chart:SetPoint("TOPLEFT", 0, -36)
+        sold.chart:SetPoint("TOPRIGHT", 0, -36)
+        local y = -36 - CHART_HEIGHT - 16
+        -- The bars below group by Type, Quality or Rule.
+        sold.groupSwitch:ClearAllPoints()
+        sold.groupSwitch:SetPoint("TOPLEFT", 10, y)
+        sold.groupSwitch:SetShown(#groups > 0)
+        if #groups > 0 then y = y - 30 - 10 end
+        local biggest = groups[1] and groups[1].value or 1
+        for i, g in ipairs(groups) do
+            local row = sold.groupRows[i] or CreateGroupRow(sold.content)
+            sold.groupRows[i] = row
+            row.key = g.key
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", 0, y)
+            row:SetPoint("TOPRIGHT", 0, y)
+            row.selected:SetShown(g.key == selected)
+            row.name:SetText(GroupLabel(g.key, group))
+            row.tip = group == "rule" and RULES[g.key] and RULES[g.key][2] or nil
+            local color = GroupColor(g.key, group)
+            local nameColor = group == "quality" and color or C.text
+            row.name:SetTextColor(nameColor[1], nameColor[2], nameColor[3])
+            row.fill:SetColorTexture(color[1], color[2], color[3], 0.85)
+            row:SetFraction(g.value / biggest)
+            row.gold:SetText(FormatMoney(g.value))
+            row.count:SetText(ItemCount(g.count))
+            row.share:SetText(Share(g.value, totalValue))
+            row:Show()
+            y = y - GROUP_HEIGHT
+        end
+        for i = #groups + 1, #sold.groupRows do sold.groupRows[i]:Hide() end
+
+        -- Top items, of everything or of the selected group.
+        y = y - 18
+        sold.topTitle:ClearAllPoints()
+        sold.topTitle:SetPoint("TOPLEFT", 10, y)
+        sold.topTitle:SetText(selected ~= nil
+            and L["TOP ITEMS: %s"]:format(GroupLabel(selected, group):upper()) or L["TOP ITEMS"])
+        sold.showAll:SetShown(selected ~= nil)
+        y = y - 24
+        local shown = math.min(#items, TOP_ITEMS)
+        for i = 1, shown do
+            local item = items[i]
+            local row = sold.itemRows[i] or CreateTopItemRow(sold.content)
+            sold.itemRows[i] = row
+            local info = ItemEntry(item.itemID)
+            row.itemID = item.itemID
+            row.icon:SetTexture(info.icon or QUESTION_MARK)
+            local color = QualityColor(item.quality or info.quality)
+            row.border:SetColorTexture(color[1], color[2], color[3], 0.9)
+            row.name:SetText(info.name)
+            row.name:SetTextColor(color[1], color[2], color[3])
+            row.count:SetText(ItemCount(item.count))
+            row.gold:SetText(FormatMoney(item.value))
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", 0, y)
+            row:SetPoint("TOPRIGHT", 0, y)
+            row:Show()
+            y = y - ITEM_HEIGHT
+        end
+        for i = shown + 1, #sold.itemRows do sold.itemRows[i]:Hide() end
+        sold.more:SetShown(#items > shown)
+        if #items > shown then
+            sold.more:ClearAllPoints()
+            sold.more:SetPoint("TOPLEFT", 10, y - 6)
+            sold.more:SetText(L["and %d more items"]:format(#items - shown))
+            y = y - 26
+        end
+
+        sold.content:SetHeight(-y + 8)
+        sold.scroll.UpdateScrollBar()
+        history.note:SetText(L["Every vendor sale counts, by Pocket Goblin, you or another addon, minus what you "
+            .. "bought back. Counted since %s."]:format(date("%b %d, %Y", since or time())))
+    end
+
+    -- The view's scroll area, in the same place as the visits'.
+    function BuildSoldView(area)
+        local sold = { groupRows = {}, itemRows = {} }
+        history.sold = sold
+        sold.area = CreateFrame("Frame", nil, area:GetParent())
+        sold.area:SetAllPoints(area)
+        sold.scroll, sold.content = CreateScrollArea(sold.area)
+        sold.scroll:SetPoint("TOPLEFT")
+        sold.scroll:SetPoint("BOTTOMRIGHT", -12, 0)
+
+        sold.summary = Text(sold.content, 13, C.text)
+        sold.chart = CreateDayChart(sold.content)
+        sold.groupSwitch = CreateSegmented(sold.content, SOLD_GROUPS,
+            function() return SoldFilter().group end,
+            function(group)
+                SoldFilter().group = group
+                history.selectedGroup = nil
+                ns.RefreshWindow()
+            end)
+        sold.summary:SetPoint("TOPLEFT", 10, -6)
+
+        sold.topTitle = Text(sold.content, 11, C.muted)
+        sold.showAll = CreateFrame("Button", nil, sold.content)
+        sold.showAll:SetSize(80, 18)
+        sold.showAll:SetPoint("LEFT", sold.topTitle, "RIGHT", 10, 0)
+        local showAllText = Text(sold.showAll, 11, C.gold)
+        showAllText:SetPoint("LEFT")
+        showAllText:SetText(L["Show all"])
+        sold.showAll:SetScript("OnEnter", function() showAllText:SetTextColor(C.goldHover[1], C.goldHover[2], C.goldHover[3]) end)
+        sold.showAll:SetScript("OnLeave", function() showAllText:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end)
+        sold.showAll:SetScript("OnClick", function()
+            history.selectedGroup = nil
+            ns.RefreshWindow()
+        end)
+        sold.more = Text(sold.content, 12, C.muted)
+
+        local empty = CreateFrame("Frame", nil, sold.area)
+        empty:SetAllPoints()
+        local emptyIcon = Icon(empty, "icon-history", 40, { 1, 1, 1, 0.12 })
+        emptyIcon:SetPoint("CENTER", 0, 24)
+        local emptyTitle = Text(empty, 15, C.text)
+        emptyTitle:SetPoint("TOP", emptyIcon, "BOTTOM", 0, -12)
+        emptyTitle:SetText(L["Nothing sold in this period"])
+        local emptyBody = Text(empty, 12, C.muted)
+        emptyBody:SetPoint("TOP", emptyTitle, "BOTTOM", 0, -6)
+        emptyBody:SetText(L["What you sell at vendors adds up here, by type and quality."])
+        sold.empty = empty
+    end
 end
 
 local function BuildHistoryPage(page)
@@ -2443,15 +3052,43 @@ local function BuildHistoryPage(page)
     Rounded(card, "BACKGROUND", C.card)
     Rounded(card, "BORDER", C.cardBorder, "rounded-border")
 
-    local bar = card:CreateTexture(nil, "ARTWORK")
-    bar:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 1)
-    bar:SetSize(3, 14)
-    bar:SetPoint("TOPLEFT", 20, -22)
-    local title = Text(card, 13, C.text)
-    title:SetPoint("LEFT", bar, "RIGHT", 10, 0)
-    title:SetText(L["RECENT VISITS"])
+    -- Visits or What you sold, each with its own controls on the right.
+    history.view = CreateSegmented(card, { { "visits", L["Visits"] }, { "sold", L["What you sold"] } },
+        function() return SoldFilter().view end,
+        function(view)
+            SoldFilter().view = view
+            ns.RefreshWindow()
+        end)
+    history.view:SetPoint("TOPLEFT", 16, -12)
     history.count = CreateBadge(card, C.muted, { 1, 1, 1, 0.06 })
-    history.count:SetPoint("LEFT", title, "RIGHT", 10, 0)
+    history.count:SetPoint("LEFT", history.view, "RIGHT", 10, 0)
+
+    -- What you sold: which days, and whose.
+    local function Menu(width, options, key, onChange)
+        local menu
+        menu = CreateDropdown(card, width,
+            function()
+                for _, option in ipairs(options) do
+                    if option[1] == SoldFilter()[key] then return option[2] end
+                end
+                return options[1][2]
+            end,
+            function(root)
+                for _, option in ipairs(options) do
+                    root:CreateRadio(option[2], function() return SoldFilter()[key] == option[1] end, function()
+                        SoldFilter()[key] = option[1]
+                        if onChange then onChange() end
+                        menu:UpdateLabel()
+                        ns.RefreshWindow()
+                    end)
+                end
+            end)
+        return menu
+    end
+    history.periodMenu = Menu(130, SOLD_PERIODS, "period", function() history.selectedDay = nil end)
+    history.periodMenu:SetPoint("TOPRIGHT", -16, -14)
+    history.whoMenu = Menu(140, SOLD_WHO, "who")
+    history.whoMenu:SetPoint("RIGHT", history.periodMenu, "LEFT", -8, 0)
 
     local function sourceFilter() return ns.db.filters.history end
     history.sourceMenu = CreateDropdown(card, 150,
@@ -2475,9 +3112,34 @@ local function BuildHistoryPage(page)
     local area = CreateFrame("Frame", nil, card)
     area:SetPoint("TOPLEFT", 10, -50)
     area:SetPoint("BOTTOMRIGHT", -10, 10)
+    -- Search items and vendors; fold or open all visits.
+    history.search = ""
+    history.expanded = setmetatable({}, { __mode = "k" }) -- [visit] = open; unset: only the newest is
+    local search = CreateSearchBox(area, function(text)
+        history.search = text
+        ns.RefreshWindow()
+    end, L["Search items or vendors"])
+    search:SetSize(240, 28)
+    search:SetPoint("TOPLEFT", 0, 0)
+    history.foldAll = CreateFrame("Button", nil, area)
+    history.foldAll:SetSize(100, 20)
+    history.foldAll:SetPoint("TOPRIGHT", -12, -4)
+    history.foldAll.text = Text(history.foldAll, 12, C.gold)
+    history.foldAll.text:SetPoint("RIGHT")
+    history.foldAll.text:SetJustifyH("RIGHT")
+    history.foldAll:SetScript("OnEnter", function(self) self.text:SetTextColor(C.goldHover[1], C.goldHover[2], C.goldHover[3]) end)
+    history.foldAll:SetScript("OnLeave", function(self) self.text:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end)
+    history.foldAll:SetScript("OnClick", function(self)
+        PlayToggleSound(true)
+        for _, visit in ipairs(ns.GetHistory()) do history.expanded[visit] = not self.allOpen end
+        ns.RefreshWindow()
+    end)
+
     history.scroll, history.content = CreateScrollArea(area)
-    history.scroll:SetPoint("TOPLEFT")
+    history.scroll:SetPoint("TOPLEFT", 0, -38)
     history.scroll:SetPoint("BOTTOMRIGHT", -12, 0)
+    history.visitsArea = area
+    BuildSoldView(area)
 
     local empty = CreateFrame("Frame", nil, area)
     empty:SetAllPoints()
@@ -2485,17 +3147,13 @@ local function BuildHistoryPage(page)
     emptyIcon:SetPoint("CENTER", 0, 24)
     local emptyTitle = Text(empty, 15, C.text)
     emptyTitle:SetPoint("TOP", emptyIcon, "BOTTOM", 0, -12)
-    emptyTitle:SetText(L["Nothing sold yet"])
     local emptyBody = Text(empty, 12, C.muted)
     emptyBody:SetPoint("TOP", emptyTitle, "BOTTOM", 0, -6)
-    emptyBody:SetText(L["Sales and repairs show up here after you visit a vendor."])
-    history.empty = empty
+    history.empty, history.emptyTitle, history.emptyBody = empty, emptyTitle, emptyBody
 
-    local note = Text(page, 12, C.muted)
-    note:SetPoint("BOTTOMLEFT", 22, 22)
-    note:SetPoint("BOTTOMRIGHT", -22, 22)
-    note:SetText(L["Buy back works while a vendor is open, for items still in its buyback list "
-        .. "(the last 12 items you sold)."])
+    history.note = Text(page, 12, C.muted)
+    history.note:SetPoint("BOTTOMLEFT", 22, 22)
+    history.note:SetPoint("BOTTOMRIGHT", -22, 22)
 end
 
 local function RefreshHistory()
@@ -2512,31 +3170,67 @@ local function RefreshHistory()
     end
     history.sourceMenu:UpdateLabel()
 
-    -- Visits with the sales that match the "Sold by" filter, then their
-    -- repairs; each visit's total is its sales, minus what was bought back.
+    local soldView = SoldFilter().view == "sold"
+    history.visitsArea:SetShown(not soldView)
+    history.sold.area:SetShown(soldView)
+    history.count:SetShown(not soldView)
+    history.sourceMenu:SetShown(not soldView)
+    history.periodMenu:SetShown(soldView)
+    history.whoMenu:SetShown(soldView)
+    if soldView then
+        history.periodMenu:UpdateLabel()
+        history.whoMenu:UpdateLabel()
+        RefreshSold()
+        return
+    end
+    history.note:SetText(L["Buy back works while a vendor is open, for items still in its buyback list "
+        .. "(the last 12 items you sold)."])
+
+    -- Visits with the sales that match the "Sold by" filter and the search,
+    -- then their repairs; each visit's total is its sales, minus what was
+    -- bought back. A visit shows its items while open: the newest one until
+    -- you fold it, and every visit while searching. A search matches item
+    -- names, or the vendor's name (which shows the whole visit).
     local source = ns.db.filters.history.source
+    local search = history.search
     local visits = ns.GetHistory()
     local buybacks = ns.MatchBuybacks()
-    local entries, shownVisits = {}, 0
-    for _, visit in ipairs(visits) do
-        local header = { visit = visit, total = 0 }
+    local entries, shownVisits, allOpen = {}, 0, true
+    for index, visit in ipairs(visits) do
+        local vendorMatch = search ~= "" and visit.vendor and visit.vendor:lower():find(search, 1, true)
+        local header = { visit = visit, total = 0, count = 0 }
         local items = {}
         for _, sold in ipairs(visit.items) do
             local soldBy = sold.source == "you" and "you" or "goblin" -- older saves say "junkseller" or nothing
-            if source == "all" or soldBy == source then
+            local name = search ~= "" and not vendorMatch
+                and (C_Item.GetItemInfo(sold.itemID) or (sold.link and sold.link:match("%[(.-)%]")) or "")
+            if (source == "all" or soldBy == source) and (not name or name:lower():find(search, 1, true)) then
                 items[#items + 1] = { sold = sold, canBuy = buybacks[sold] ~= nil }
+                header.count = header.count + 1
                 if not sold.boughtBack then header.total = header.total + sold.value end
             end
         end
-        for _, repair in ipairs(visit.repairs or {}) do
-            items[#items + 1] = { repair = repair }
+        if search == "" or vendorMatch then
+            for _, repair in ipairs(visit.repairs or {}) do
+                items[#items + 1] = { repair = repair }
+            end
         end
         if #items > 0 then
             shownVisits = shownVisits + 1
+            local open = history.expanded[visit]
+            if open == nil then open = index == 1 end
+            if search ~= "" then open = true end
+            allOpen = allOpen and open
+            header.open = open
             entries[#entries + 1] = header
-            for _, item in ipairs(items) do entries[#entries + 1] = item end
+            if open then
+                for _, item in ipairs(items) do entries[#entries + 1] = item end
+            end
         end
     end
+    history.foldAll.allOpen = allOpen
+    history.foldAll.text:SetText(allOpen and L["Fold all"] or L["Open all"])
+    history.foldAll:SetShown(search == "" and shownVisits > 1)
 
     for i, entry in ipairs(entries) do
         history.rows[i] = history.rows[i] or CreateHistoryRow(i)
@@ -2549,8 +3243,15 @@ local function RefreshHistory()
     history.content:SetHeight(math.max(#entries * ITEM_HEIGHT, 1))
     history.scroll.UpdateScrollBar()
 
-    history.count:SetText(shownVisits == 1 and L["1 visit"] or (shownVisits .. " visits"))
+    history.count:SetText(shownVisits == 1 and L["1 visit"] or L["%d visits"]:format(shownVisits))
     history.empty:SetShown(shownVisits == 0)
+    if search ~= "" then
+        history.emptyTitle:SetText(L["No matches"])
+        history.emptyBody:SetText(L["No item or vendor in your history matches that."])
+    else
+        history.emptyTitle:SetText(L["Nothing sold yet"])
+        history.emptyBody:SetText(L["Sales and repairs show up here after you visit a vendor."])
+    end
 end
 
 
@@ -2763,6 +3464,64 @@ local function BuildGeneralPage(page)
             end)
         NewsDot(card, "newsChat")
         finish()
+
+        -- Characters: one row each, with Forget for all but this one, and
+        -- Merge for this one under an older realm name.
+        card, finish = addCard(L["Characters"])
+        AddRow(card, L["Your characters"],
+            L["Pocket Goblin keeps each character's history and earnings. If one shows up twice because the game "
+                .. "renamed its realm, log on to it and merge the other entry into it. Forget a character you deleted, "
+                .. "or one that came along from another version of the game, and its sales leave All characters. "
+                .. "Profiles stay either way."])
+        NewsDot(card, "characters")
+        local function Details(character)
+            local sold = L["Sold %s in all"]:format(character.earned > 0 and GetMoneyString(character.earned, true) or "0")
+            if not character.lastVisit then return sold end
+            return sold .. "  ·  " .. L["last vendor visit %s"]:format(date("%b %d, %Y", character.lastVisit))
+        end
+        local currentRow
+        -- Takes a forgotten or merged character's row away.
+        local function RemoveRow(row)
+            for i = #card.rows, 1, -1 do
+                if card.rows[i] == row then table.remove(card.rows, i) end
+            end
+            row.title:Hide()
+            row.desc:Hide()
+            row.control:Hide()
+            if currentRow then currentRow.desc:SetText(Details(ns.GetCharacters()[1])) end -- merged sales
+            page.Restack()
+        end
+        for _, character in ipairs(ns.GetCharacters()) do
+            AddRow(card, character.fullName, Details(character), function(parent)
+                if character.current then
+                    local badge = CreateBadge(parent, C.muted, { 1, 1, 1, 0.06 })
+                    badge:SetText(L["THIS CHARACTER"])
+                    return badge
+                end
+                local holder = CreateFrame("Frame", nil, parent)
+                holder:SetHeight(32)
+                local forget = CreateConfirmButton(holder, L["Forget"], 90, "danger", function()
+                    ns.ForgetCharacter(character.key)
+                    RemoveRow(holder.row)
+                end)
+                forget:SetPoint("RIGHT")
+                local width = 90
+                if character.sameName then
+                    local merge = CreateConfirmButton(holder, L["Merge into this character"], 190, "primary", function()
+                        ns.MergeCharacter(character.key)
+                        RemoveRow(holder.row)
+                    end)
+                    merge:SetPoint("RIGHT", forget, "LEFT", -8, 0)
+                    width = width + 8 + 190
+                end
+                holder:SetWidth(width)
+                return holder
+            end)
+            -- The buttons find their row (AddRow's entry) to take it away.
+            local entry = card.rows[#card.rows]
+            if character.current then currentRow = entry else entry.control.row = entry end
+        end
+        finish()
     end)
 end
 
@@ -2782,7 +3541,7 @@ local function BuildAboutPage(page)
             .. "is open you can buy back items still in its buyback list (the last 12 items you sold), one by one "
             .. "or all at once."])
         AddRow(card, L["Suggestions"], L["Sell the same item yourself a few times and the vendor panel offers to "
-            .. "put it on the auto-sell list."])
+            .. "put it on the auto-sell list. Buy back something Pocket Goblin sold twice and it offers to keep it."])
         finish()
 
         card, finish = addCard(L["Help"])

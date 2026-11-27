@@ -8,7 +8,7 @@
 ## Category: Bags & Inventory
 ## IconTexture: Interface\AddOns\PocketGoblin\Media\icon
 ## SavedVariables: PocketGoblinDB
-## OptionalDeps: Baganator, Pawn, EllesmereUIBags
+## OptionalDeps: Baganator, Bagnon, Pawn, EllesmereUIBags
 ## AddonCompartmentFunc: PocketGoblin_OnAddonCompartmentClick
 
 Locales/Locales.lua
@@ -22,5 +22,6 @@ Minimap.lua
 DestroyButton.lua
 OpenButton.lua
 Ellesmere.lua
+Bagnon.lua
 BagSort.lua
 MerchantPanel.lua

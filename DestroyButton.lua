@@ -102,15 +102,20 @@ ns.MatchParentLayer = MatchParentLayer -- also used by the sort button
 
 -- size is the frame size. The default style is Pocket Goblin's dark rounded
 -- button; blizzardStyle is a bare gold icon that matches the default bags'
--- title bar, or "ellesmere" a bare light one like EllesmereUI's header icons.
+-- title bar, "ellesmere" a bare light one like EllesmereUI's header icons,
+-- or "bagnon" a gold one on Bagnon's dark button.
 local function CreateDestroyButton(parent, size, blizzardStyle)
     local UI = ns.UI
-    local button = CreateFrame("Button", nil, parent)
+    local bagnon = blizzardStyle == "bagnon"
+    local button = CreateFrame("Button", nil, parent, bagnon and "BagnonButtonTemplate" or nil)
     button:SetSize(size, size)
     button.blizzardStyle = blizzardStyle
 
     if blizzardStyle == "ellesmere" then
         button.trash = UI.Icon(button, "icon-trash", size - 4, ELLESMERE_COLOR)
+        button.trash:SetPoint("CENTER")
+    elseif bagnon then -- the template brings the border, highlight and pressed look
+        button.trash = UI.Icon(button, "icon-trash", size - 4, BLIZZARD_GOLD)
         button.trash:SetPoint("CENTER")
     elseif blizzardStyle then
         button.trash = UI.Icon(button, "icon-trash", size - 2, BLIZZARD_GOLD) -- same size as the sort icon
@@ -403,6 +408,7 @@ end
 
 function ns.UpdateDestroyButtons()
     if ns.SyncEllesmereHeader then ns.SyncEllesmereHeader() end
+    if ns.SyncBagnon then ns.SyncBagnon() end
     if #buttons == 0 then return end
 
     for _, button in ipairs(buttons) do
@@ -476,6 +482,71 @@ local function HasItemLoot()
     return false
 end
 
+-- Whether all the item loot fits in your bags: onto stacks you already
+-- carry, into free slots, or into a profession bag that takes it (a herb bag
+-- for herbs). With 1 free slot and 3 items, it doesn't.
+local CONTAINER_CLASS = Enum.ItemClass and Enum.ItemClass.Container or 1
+local GetItemFamily = C_Item.GetItemFamily or GetItemFamily
+local function LootFits()
+    local LAST = ns.LAST_BAG or 4
+    local bags = {} -- bags with free slots: { free =, family = }
+    for bag = 0, LAST do
+        local free, family = C_Container.GetContainerNumFreeSlots(bag)
+        if free and free > 0 then bags[#bags + 1] = { free = free, family = family or 0 } end
+    end
+    local room = {} -- [itemID] = how many more the stacks you carry take
+    local function stackRoom(itemID, maxStack)
+        if room[itemID] == nil then
+            local total = 0
+            for bag = 0, LAST do
+                for slot = 1, C_Container.GetContainerNumSlots(bag) do
+                    local info = C_Container.GetContainerItemInfo(bag, slot)
+                    if info and info.itemID == itemID then
+                        total = total + math.max(0, maxStack - (info.stackCount or 1))
+                    end
+                end
+            end
+            room[itemID] = total
+        end
+        return room[itemID]
+    end
+    -- Takes a free slot for an item of this family: profession bags first.
+    local function takeSlot(itemFamily)
+        for pass = 1, 2 do
+            for _, bag in ipairs(bags) do
+                local fits = pass == 1 and bag.family ~= 0 and itemFamily ~= 0 and bit.band(bag.family, itemFamily) ~= 0
+                    or pass == 2 and bag.family == 0
+                if fits and bag.free > 0 then
+                    bag.free = bag.free - 1
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    for slot = 1, GetNumLootItems() do
+        if GetLootSlotType(slot) == ITEM_LOOT then
+            local _, _, quantity = GetLootSlotInfo(slot)
+            quantity = quantity or 1
+            local link = GetLootSlotLink(slot)
+            local itemID, _, _, _, _, classID = link and C_Item.GetItemInfoInstant(link)
+            local maxStack = itemID and select(8, C_Item.GetItemInfo(itemID)) or 1
+            if itemID and maxStack > 1 then
+                local onStacks = math.min(quantity, stackRoom(itemID, maxStack))
+                room[itemID] = room[itemID] - onStacks
+                quantity = quantity - onStacks
+            end
+            -- Bags only go in ordinary bags, whatever their own family says.
+            local family = itemID and classID ~= CONTAINER_CLASS and GetItemFamily(itemID) or 0
+            for _ = 1, math.ceil(quantity / math.max(maxStack, 1)) do
+                if not takeSlot(family or 0) then return false end
+            end
+        end
+    end
+    return true
+end
+
 -- The item loot, most wanted first: quest items (needed whatever they're
 -- worth), then by value: the higher of vendor and auction house price, or
 -- for grey items, which always sell, the vendor price.
@@ -546,6 +617,7 @@ local function MakeRoomState()
         lootOpen = lootOpen,
         freeSlots = ns.GetFreeBagSlots(),
         itemLoot = lootOpen and HasItemLoot() or false,
+        fits = not lootOpen or LootFits(),
         junk = ns.FindCheapestJunk() ~= nil,
     }
 end
@@ -564,13 +636,13 @@ local function PlaceMakeRoom()
     end
 end
 
--- Shown while the loot window is open with item loot and your bags are
--- full; greyed out, with the reason in its tooltip, when there's no junk it
--- may destroy.
+-- Shown while the loot window is open with item loot that doesn't all fit
+-- in your bags; greyed out, with the reason in its tooltip, when there's no
+-- junk it may destroy.
 local function UpdateMakeRoom()
     if not makeRoom then return end
     local state = MakeRoomState()
-    local show = state.setting and state.lootOpen and state.freeSlots == 0 and state.itemLoot
+    local show = state.setting and state.lootOpen and state.itemLoot and not state.fits
     if show then
         PlaceMakeRoom()
         makeRoom:SetEnabled(state.junk)
@@ -583,9 +655,9 @@ end
 -- A line for /goblin debug.
 function ns.DebugMakeRoom(add)
     local state = MakeRoomState()
-    add("Make room: setting %s, loot open %s, free slots %d, item loot %s, junk %s, shown %s, loot window %s",
+    add("Make room: setting %s, loot open %s, free slots %d, item loot %s, fits %s, junk %s, shown %s, loot window %s",
         tostring(state.setting), tostring(state.lootOpen), state.freeSlots, tostring(state.itemLoot),
-        tostring(state.junk), tostring(makeRoom and makeRoom:IsShown() or false),
+        tostring(state.fits), tostring(state.junk), tostring(makeRoom and makeRoom:IsShown() or false),
         LootFrame and (LootFrame:IsShown() and "shown" or "hidden") or "missing")
 end
 

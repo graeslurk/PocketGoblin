@@ -2089,6 +2089,9 @@ local function BuildBagsPage(page)
         card, finish = addCard(L["Bag buttons"])
         AddRow(card, L["Sort button"], L["Stacks and sorts the default bags, junk last. Baganator has its own."],
             SettingToggle("sortButton", ns.UpdateDestroyButtons)) -- moves both buttons
+        AddRow(card, L["Show open button"],
+            L["Opens clams, sacks and other containers, one per click. Also a hotkey."],
+            SettingToggle("openButton", ns.UpdateOpenButtons))
         AddRow(card, L["Show destroy button"],
             L["A trash can that destroys your cheapest junk, the same items Pocket Goblin would sell. Hover it "
                 .. "to see what goes."],
@@ -2108,9 +2111,6 @@ local function BuildBagsPage(page)
                         ns.UpdateDestroyButtons()
                     end)
             end), "destroyProtect" }
-        AddRow(card, L["Show open button"],
-            L["Opens clams, sacks and other containers, one per click. Also a hotkey."],
-            SettingToggle("openButton", ns.UpdateOpenButtons))
         finish()
 
         card, finish = addCard(L["Full bags"])

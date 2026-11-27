@@ -50,10 +50,11 @@ None of these are destroyed by the trash can or Make room either.
 ## In your bags
 
 - **Alt+Right-click** any item to put it on the auto-sell list or the keep list
-- **Coin and lock icons** on junk and kept items, and a green **upgrade arrow** on better gear (with Pawn), in the default bags, Baganator and EllesmereUI's bags, plus **equipment set icons** in the default bags and EllesmereUI's
+- **Coin and lock icons** on junk and kept items, and a green **upgrade arrow** on better gear (with Pawn), in the default bags, Baganator, Bagnon and EllesmereUI's bags, plus **equipment set icons** in the default bags, Bagnon and EllesmereUI's
 - **Destroy button** for the cheapest junk, with a confirmation and a value limit
-- **Make room** when your bags are full: a button on the loot window destroys your cheapest junk and loots, in one click
+- **Make room** when your loot doesn't fit: a button on the loot window destroys your cheapest junk and loots, in one click
 - **Open containers**: a button (and a hotkey) opens clams, sacks of loot and other containers, one per click
+- The trash can and the open button sit on the default bags, Baganator, Bagnon and EllesmereUI's bags
 - **Sort button** on the default bags: stacks and sorts everything, with junk last
 - **Bag space warning** when your bags are nearly full
 - **Hotkeys** in the game's Key Bindings (Pocket Goblin): put the item under your mouse on the auto-sell or keep list, or destroy the cheapest junk. Pressing a key again leaves the item where it is, so a quick tap is always safe

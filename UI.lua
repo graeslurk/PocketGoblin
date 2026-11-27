@@ -2388,7 +2388,7 @@ local SOLD_PERIODS = {
     { "today", L["Today"] }, { "week", L["Last 7 days"] },
     { "character", L["This character"] }, { "account", L["All characters"] },
 }
-local SOLD_GROUPS = { { "type", L["Type"] }, { "quality", L["Quality"] } }
+local SOLD_GROUPS = { { "type", L["Type"] }, { "quality", L["Quality"] }, { "rule", L["Rule"] } }
 local function SoldFilter() return ns.db.filters.history end
 -- The view's helpers live in this block (UI.lua is close to Lua's limit of
 -- 200 locals at the top of a file).
@@ -2415,7 +2415,39 @@ do
         return classID or "unknown"
     end
 
+    -- The Rule view's groups: the junk rules (REASONS keys), "you" and
+    -- "earlier", each with a name and what it means (on hover).
+    local RULES = {
+        flagged = { L["Auto-sell list"], L["Items on your auto-sell list."] },
+        grey = { L["Grey items"], L["Grey items, under Grey and white items on the Junk rules page."] },
+        whiteGear = { L["White gear"], L["White weapons and armor, from the level you choose."] },
+        cheap = { L["Cheap white items"], L["White items worth less than the limit you set."] },
+        oldFood = { L["Old food & drink"], L["Food and drink you've outgrown: you carry better."] },
+        unusable = { L["Unusable gear"], L["Gear your class can never use, like plate on a mage: white gear, and soulbound gear."] },
+        outgrown = { L["Outgrown gear"], L["Soulbound gear whose required level is far below yours."] },
+        lighterArmor = { L["Lighter armor"], L["Soulbound armor lighter than the kind you wear."] },
+        knownRecipe = { L["Known recipes"], L["Recipes you already know."] },
+        you = { L["You or an addon"], L["Sold by you, or by another addon that sells junk."] },
+        earlier = { L["Earlier sales"], L["Pocket Goblin's sales from before it saved which rule sold them."] },
+    }
+
+    -- An item's totals as the pieces its group(s) get: one for Type and
+    -- Quality, one per rule (and what's from before rules) for Rule.
+    local function Pieces(itemID, entry, group)
+        if group ~= "rule" then
+            return { { key = GroupOf(itemID, entry, group), value = entry.value, count = entry.count } }
+        end
+        local pieces, value, count = {}, entry.value, entry.count
+        for rule, part in pairs(entry.rules or {}) do
+            pieces[#pieces + 1] = { key = RULES[rule] and rule or "earlier", value = part.value, count = part.count }
+            value, count = value - part.value, count - part.count
+        end
+        if value > 0 and count > 0 then pieces[#pieces + 1] = { key = "earlier", value = value, count = count } end
+        return pieces
+    end
+
     local function GroupLabel(key, group)
+        if group == "rule" then return RULES[key] and RULES[key][1] or L["Unknown"] end
         if key == "unknown" then return L["Unknown"] end
         if group == "quality" then return _G["ITEM_QUALITY" .. key .. "_DESC"] or (L["Quality "] .. key) end
         if key == "junk" then return ItemSubClassName(MISC, JUNK_SUBCLASS) end
@@ -2424,6 +2456,7 @@ do
 
     local function GroupColor(key, group)
         if group == "quality" and key ~= "unknown" then return QualityColor(key) end
+        if group == "rule" and (key == "you" or key == "earlier") then return C.muted end
         return C.gold
     end
 
@@ -2449,7 +2482,7 @@ do
 
         row.name = Text(row, 13, C.text)
         row.name:SetPoint("LEFT", 10, 0)
-        row.name:SetWidth(124)
+        row.name:SetWidth(150)
         row.name:SetWordWrap(false)
 
         row.share = Text(row, 12, C.muted)
@@ -2468,7 +2501,7 @@ do
         -- The track is a frame, so the bar follows the window's width.
         local track = CreateFrame("Frame", nil, row)
         track:SetHeight(8)
-        track:SetPoint("LEFT", 144, 0)
+        track:SetPoint("LEFT", 170, 0)
         track:SetPoint("RIGHT", row.gold, "LEFT", -16, 0)
         local trackBg = track:CreateTexture(nil, "ARTWORK")
         trackBg:SetAllPoints()
@@ -2485,8 +2518,14 @@ do
             row.fill:SetWidth(math.max(1, width * self.fraction))
         end)
 
-        row:SetScript("OnEnter", function() hover:Show() end)
-        row:SetScript("OnLeave", function() hover:Hide() end)
+        row:SetScript("OnEnter", function(self)
+            hover:Show()
+            if self.tip then ShowTooltip(self, self.name:GetText(), self.tip) end
+        end)
+        row:SetScript("OnLeave", function()
+            hover:Hide()
+            GameTooltip_Hide()
+        end)
         row:SetScript("OnClick", function(self)
             PlayToggleSound(true)
             history.selectedGroup = history.selectedGroup ~= self.key and self.key or nil
@@ -2544,17 +2583,20 @@ do
         -- Add up the groups, and list the items of the selected one.
         local groups, byKey = {}, {}
         local totalValue, totalCount = 0, 0
+        local piecesOf = {} -- [itemID] = Pieces()
         for itemID, entry in pairs(totals) do
             if entry.value > 0 and KnownItem(itemID) then
-                local key = GroupOf(itemID, entry, group)
-                local g = byKey[key]
-                if not g then
-                    g = { key = key, value = 0, count = 0 }
-                    byKey[key] = g
-                    groups[#groups + 1] = g
+                piecesOf[itemID] = Pieces(itemID, entry, group)
+                for _, piece in ipairs(piecesOf[itemID]) do
+                    local g = byKey[piece.key]
+                    if not g then
+                        g = { key = piece.key, value = 0, count = 0 }
+                        byKey[piece.key] = g
+                        groups[#groups + 1] = g
+                    end
+                    g.value = g.value + piece.value
+                    g.count = g.count + piece.count
                 end
-                g.value = g.value + entry.value
-                g.count = g.count + entry.count
                 totalValue = totalValue + entry.value
                 totalCount = totalCount + entry.count
             end
@@ -2566,14 +2608,23 @@ do
         if history.selectedGroup ~= nil and not byKey[history.selectedGroup] then history.selectedGroup = nil end
         local selected = history.selectedGroup
 
+        -- Each item with what it made: all of it, or its piece in the selected group.
         local items = {}
-        for itemID, entry in pairs(totals) do
-            if entry.value > 0 and KnownItem(itemID) and (selected == nil or GroupOf(itemID, entry, group) == selected) then
-                items[#items + 1] = { itemID = itemID, entry = entry }
+        for itemID, pieces in pairs(piecesOf) do
+            local entry = totals[itemID]
+            if selected == nil then
+                items[#items + 1] = { itemID = itemID, value = entry.value, count = entry.count, quality = entry.quality }
+            else
+                for _, piece in ipairs(pieces) do
+                    if piece.key == selected then
+                        items[#items + 1] = { itemID = itemID, value = piece.value, count = piece.count,
+                            quality = entry.quality }
+                    end
+                end
             end
         end
         table.sort(items, function(a, b)
-            if a.entry.value ~= b.entry.value then return a.entry.value > b.entry.value end
+            if a.value ~= b.value then return a.value > b.value end
             return a.itemID < b.itemID
         end)
 
@@ -2593,6 +2644,7 @@ do
             row:SetPoint("TOPRIGHT", 0, y)
             row.selected:SetShown(g.key == selected)
             row.name:SetText(GroupLabel(g.key, group))
+            row.tip = group == "rule" and RULES[g.key] and RULES[g.key][2] or nil
             local color = GroupColor(g.key, group)
             local nameColor = group == "quality" and color or C.text
             row.name:SetTextColor(nameColor[1], nameColor[2], nameColor[3])
@@ -2622,12 +2674,12 @@ do
             local info = ItemEntry(item.itemID)
             row.itemID = item.itemID
             row.icon:SetTexture(info.icon or QUESTION_MARK)
-            local color = QualityColor(item.entry.quality or info.quality)
+            local color = QualityColor(item.quality or info.quality)
             row.border:SetColorTexture(color[1], color[2], color[3], 0.9)
             row.name:SetText(info.name)
             row.name:SetTextColor(color[1], color[2], color[3])
-            row.count:SetText(ItemCount(item.entry.count))
-            row.gold:SetText(FormatMoney(item.entry.value))
+            row.count:SetText(ItemCount(item.count))
+            row.gold:SetText(FormatMoney(item.value))
             row:ClearAllPoints()
             row:SetPoint("TOPLEFT", 0, y)
             row:SetPoint("TOPRIGHT", 0, y)

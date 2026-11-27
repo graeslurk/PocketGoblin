@@ -177,7 +177,7 @@ local db -- the active profile (PocketGoblinDB.profiles[name])
 local characterKey
 local charData -- PocketGoblinDB.characters[characterKey]
 local session = { earned = 0, sold = 0, allEarned = 0, repairs = 0, repairsGuild = 0 }
-local pendingOwnSales = {} -- { itemID, count } Pocket Goblin sold, not yet seen in the buyback list
+local pendingOwnSales = {} -- { itemID, count, rule } Pocket Goblin sold, not yet seen in the buyback list
 local vendorName
 local currentVisit -- history entry for the open vendor window
 local merchantOpen = false
@@ -1434,7 +1434,7 @@ local function GetSellable(bag, slot, asked)
     if reason and AsksFirst(info, reason) == (asked or false) then
         local price = select(11, C_Item.GetItemInfo(info.itemID)) or 0
         if price > 0 then
-            return info, price * (info.stackCount or 1)
+            return info, price * (info.stackCount or 1), reason
         end
     end
 end
@@ -1475,8 +1475,20 @@ end
 
 local DAYS_KEPT = 14
 
--- totals: { [itemID] = { value = copper, count = items, quality } }
-local function AddToTotals(totals, itemID, quality, count, value)
+-- Part of an item's totals by the rule that sold it: a REASONS key, or
+-- "you" for sales by you or another addon. Sales from before rules were
+-- saved have none.
+local function AddRule(entry, rule, count, value)
+    entry.rules = entry.rules or {}
+    local part = entry.rules[rule] or { value = 0, count = 0 }
+    entry.rules[rule] = part
+    part.value, part.count = part.value + value, part.count + count
+    if part.count <= 0 then entry.rules[rule] = nil end
+end
+
+-- totals: { [itemID] = { value = copper, count = items, quality,
+-- rules = { [rule] = { value, count } } } }
+local function AddToTotals(totals, itemID, quality, count, value, rule)
     local entry = totals[itemID]
     if not entry then
         entry = { value = 0, count = 0 }
@@ -1485,22 +1497,37 @@ local function AddToTotals(totals, itemID, quality, count, value)
     entry.value = entry.value + value
     entry.count = entry.count + count
     if quality then entry.quality = quality end
+    if rule then AddRule(entry, rule, count, value) end
     if entry.count <= 0 then totals[itemID] = nil end
+end
+
+-- Adds one item's totals, with their rules, to other totals.
+local function MergeEntry(totals, itemID, entry)
+    AddToTotals(totals, itemID, entry.quality, entry.count, entry.value)
+    local merged = totals[itemID]
+    if not merged then return end
+    for rule, part in pairs(entry.rules or {}) do AddRule(merged, rule, part.count, part.value) end
 end
 
 local function OldestDay(days)
     return date("%Y-%m-%d", time() - (days - 1) * 86400)
 end
 
--- Adds a sale made at time when to a character's totals (negative count
--- and value for a buyback).
-local function AddItemSale(character, itemID, quality, count, value, when)
-    AddToTotals(character.itemSales, itemID, quality, count, value)
+-- Adds a sale made at time when, by rule (or nil), to a character's totals
+-- (negative count and value for a buyback).
+local function AddItemSale(character, itemID, quality, count, value, when, rule)
+    AddToTotals(character.itemSales, itemID, quality, count, value, rule)
     local day = date("%Y-%m-%d", when)
     if day >= OldestDay(DAYS_KEPT) then
         character.daySales[day] = character.daySales[day] or {}
-        AddToTotals(character.daySales[day], itemID, quality, count, value)
+        AddToTotals(character.daySales[day], itemID, quality, count, value, rule)
     end
+end
+
+-- The rule a history sale counts under: the one saved with it, "you" for
+-- yours, or nil for Pocket Goblin's from before rules were saved.
+local function SaleRule(sold)
+    return sold.rule or (sold.source == "you" and "you") or nil
 end
 
 -- Sets up a character's totals at login. The first time, they start from
@@ -1513,11 +1540,28 @@ local function SetUpItemSales(character)
             for _, sold in ipairs(visit.items or {}) do
                 if not sold.boughtBack and (sold.itemID or 0) ~= 0 then
                     AddItemSale(character, sold.itemID, sold.quality, sold.count or 1, sold.value or 0,
-                        visit.time or time())
+                        visit.time or time(), SaleRule(sold))
                 end
             end
             if visit.time and visit.time < character.itemSalesSince then character.itemSalesSince = visit.time end
         end
+        character.rulesCounted = true
+    end
+    if not character.rulesCounted then
+        -- Totals from before rules were saved: the history still says which
+        -- of its sales were yours.
+        local oldestDay = OldestDay(DAYS_KEPT)
+        for _, visit in ipairs(character.history or {}) do
+            for _, sold in ipairs(visit.items or {}) do
+                local entry = not sold.boughtBack and sold.source == "you" and character.itemSales[sold.itemID]
+                if entry then AddRule(entry, "you", sold.count or 1, sold.value or 0) end
+                local day = visit.time and date("%Y-%m-%d", visit.time)
+                local dayEntry = entry and day and day >= oldestDay and character.daySales[day]
+                    and character.daySales[day][sold.itemID]
+                if dayEntry then AddRule(dayEntry, "you", sold.count or 1, sold.value or 0) end
+            end
+        end
+        character.rulesCounted = true
     end
     local oldest = OldestDay(DAYS_KEPT)
     for day in pairs(character.daySales) do
@@ -1533,9 +1577,7 @@ function ns.GetItemSales(period)
         local merged, since = {}, time()
         for _, character in pairs(PocketGoblinDB.characters) do
             if character.itemSales then
-                for itemID, entry in pairs(character.itemSales) do
-                    AddToTotals(merged, itemID, entry.quality, entry.count, entry.value)
-                end
+                for itemID, entry in pairs(character.itemSales) do MergeEntry(merged, itemID, entry) end
                 since = math.min(since, character.itemSalesSince or since)
             end
         end
@@ -1546,9 +1588,7 @@ function ns.GetItemSales(period)
         local merged = {}
         for day, totals in pairs(charData.daySales) do
             if day >= oldest then
-                for itemID, entry in pairs(totals) do
-                    AddToTotals(merged, itemID, entry.quality, entry.count, entry.value)
-                end
+                for itemID, entry in pairs(totals) do MergeEntry(merged, itemID, entry) end
             end
         end
         return merged, charData.itemSalesSince
@@ -1570,16 +1610,17 @@ local function CurrentVisit()
     return currentVisit
 end
 
-local function RecordSale(entry, source)
+local function RecordSale(entry, source, rule)
     CurrentVisit()
     local quality = entry.link and select(3, C_Item.GetItemInfo(entry.link))
     local items = currentVisit.items
-    items[#items + 1] = {
+    local sold = {
         itemID = entry.itemID, link = entry.link, quality = quality,
-        count = entry.count, value = entry.price, source = source,
+        count = entry.count, value = entry.price, source = source, rule = rule,
     }
+    items[#items + 1] = sold
     AddEarnings(entry.price, 1, source == "goblin")
-    AddItemSale(charData, entry.itemID, quality, entry.count, entry.price, time())
+    AddItemSale(charData, entry.itemID, quality, entry.count, entry.price, time(), SaleRule(sold))
     if source == "goblin" then
         session.lastSale = GetTime()
         ns.CheckMilestones()
@@ -1657,10 +1698,10 @@ local function ClaimOwnSale(entry)
     for i, own in ipairs(pendingOwnSales) do
         if own.itemID == entry.itemID and own.count == entry.count then
             table.remove(pendingOwnSales, i)
-            return true
+            return own
         end
     end
-    return false
+    return nil
 end
 
 local function StopSelling()
@@ -1727,13 +1768,13 @@ local function SellJunk(manual, asked, onlyBag, onlySlot)
             StopSelling()
             return
         end
-        local info, value = GetSellable(entry.bag, entry.slot, asked)
+        local info, value, reason = GetSellable(entry.bag, entry.slot, asked)
         if info and info.itemID == entry.itemID then
             C_Container.UseContainerItem(entry.bag, entry.slot)
             sellSummary.count = sellSummary.count + 1
             sellSummary.money = sellSummary.money + value
             -- Recorded once it shows up in the vendor's buyback list.
-            pendingOwnSales[#pendingOwnSales + 1] = { itemID = info.itemID, count = info.stackCount or 1 }
+            pendingOwnSales[#pendingOwnSales + 1] = { itemID = info.itemID, count = info.stackCount or 1, rule = reason }
         end
     end, #queue + 1)
     ns.UpdateMerchantPanel() -- show "Selling..." on the panel
@@ -1826,14 +1867,10 @@ local function MergeCharacterData(target, source)
         end
     end
     for key in pairs(source.milestones or {}) do target.milestones[key] = true end
-    for itemID, entry in pairs(source.itemSales) do
-        AddToTotals(target.itemSales, itemID, entry.quality, entry.count, entry.value)
-    end
+    for itemID, entry in pairs(source.itemSales) do MergeEntry(target.itemSales, itemID, entry) end
     for day, totals in pairs(source.daySales) do
         target.daySales[day] = target.daySales[day] or {}
-        for itemID, entry in pairs(totals) do
-            AddToTotals(target.daySales[day], itemID, entry.quality, entry.count, entry.value)
-        end
+        for itemID, entry in pairs(totals) do MergeEntry(target.daySales[day], itemID, entry) end
     end
     target.itemSalesSince = math.min(target.itemSalesSince or time(), source.itemSalesSince or time())
 end
@@ -1991,7 +2028,7 @@ local function OnBuyback(index)
             sold.boughtBack = true
             AddEarnings(-sold.value, -1, sold.source ~= "you")
             AddItemSale(charData, sold.itemID, sold.quality, -sold.count, -sold.value,
-                visits[sold] and visits[sold].time or time())
+                visits[sold] and visits[sold].time or time(), SaleRule(sold))
             Summary(ns.Say("boughtBack", L["Bought back %s."], sold.link .. (sold.count > 1 and (" x" .. sold.count) or "")))
             break
         end
@@ -2012,7 +2049,7 @@ local function OnBuybackListChanged()
             local own = ClaimOwnSale(entry)
             -- If the lists didn't overlap, only trust sales we know we made.
             if own or certain then
-                RecordSale(entry, own and "goblin" or "you")
+                RecordSale(entry, own and "goblin" or "you", own and own.rule)
             end
         end
     end

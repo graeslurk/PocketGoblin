@@ -16,7 +16,7 @@ ns.WHATS_NEW = {
         version = "1.12.0",
         chat = L["a breakdown of what you sell, by item type and quality"],
         points = {
-            { text = L["What you sold: on the History page, see which kinds of items earn you the most gold, and your top items."],
+            { text = L["What you sold: on the History page, see which kinds of items and which junk rules earn you the most gold, and your top items."],
                 page = "history" },
         },
     },

@@ -147,7 +147,9 @@ local defaults = {
         sell = { qualities = {}, inBags = false, sort = "name" },
         quest = { qualities = {}, flaggedOnly = false, hideLow = false, hideHigh = false, sort = "name" },
         keep = { qualities = {}, inBags = false, sort = "name" },
-        history = { source = "all" }, -- "all", "goblin" or "you"
+        -- source: "all", "goblin" or "you"; view: "visits" or "sold" (What you
+        -- sold), which groups by "type" or "quality" over period (see GetItemSales).
+        history = { source = "all", view = "visits", group = "type", period = "character" },
     },
 }
 
@@ -1464,6 +1466,96 @@ local function AddEarnings(copper, stacks, byGoblin)
     end
 end
 
+------------------------------------------------------------------------
+-- What you sold: running totals per item for the History page's "What you
+-- sold" view. The history keeps only the last visits, so these add up every
+-- vendor sale (Pocket Goblin's, yours or another addon's) for good, and day
+-- by day for the last DAYS_KEPT days. Buybacks are taken off again.
+------------------------------------------------------------------------
+
+local DAYS_KEPT = 14
+
+-- totals: { [itemID] = { value = copper, count = items, quality } }
+local function AddToTotals(totals, itemID, quality, count, value)
+    local entry = totals[itemID]
+    if not entry then
+        entry = { value = 0, count = 0 }
+        totals[itemID] = entry
+    end
+    entry.value = entry.value + value
+    entry.count = entry.count + count
+    if quality then entry.quality = quality end
+    if entry.count <= 0 then totals[itemID] = nil end
+end
+
+local function OldestDay(days)
+    return date("%Y-%m-%d", time() - (days - 1) * 86400)
+end
+
+-- Adds a sale made at time when to a character's totals (negative count
+-- and value for a buyback).
+local function AddItemSale(character, itemID, quality, count, value, when)
+    AddToTotals(character.itemSales, itemID, quality, count, value)
+    local day = date("%Y-%m-%d", when)
+    if day >= OldestDay(DAYS_KEPT) then
+        character.daySales[day] = character.daySales[day] or {}
+        AddToTotals(character.daySales[day], itemID, quality, count, value)
+    end
+end
+
+-- Sets up a character's totals at login. The first time, they start from
+-- the visits its history still has.
+local function SetUpItemSales(character)
+    if not character.itemSales then
+        character.itemSales, character.daySales = {}, {}
+        character.itemSalesSince = time()
+        for _, visit in ipairs(character.history or {}) do
+            for _, sold in ipairs(visit.items or {}) do
+                if not sold.boughtBack and (sold.itemID or 0) ~= 0 then
+                    AddItemSale(character, sold.itemID, sold.quality, sold.count or 1, sold.value or 0,
+                        visit.time or time())
+                end
+            end
+            if visit.time and visit.time < character.itemSalesSince then character.itemSalesSince = visit.time end
+        end
+    end
+    local oldest = OldestDay(DAYS_KEPT)
+    for day in pairs(character.daySales) do
+        if day < oldest then character.daySales[day] = nil end
+    end
+end
+
+-- What was sold in a period: "today" or "week" (the last 7 days) on this
+-- character, "character" (all along) or "account" (all characters). Returns
+-- totals as AddToTotals keeps them, and when the counting started.
+function ns.GetItemSales(period)
+    if period == "account" then
+        local merged, since = {}, time()
+        for _, character in pairs(PocketGoblinDB.characters) do
+            if character.itemSales then
+                for itemID, entry in pairs(character.itemSales) do
+                    AddToTotals(merged, itemID, entry.quality, entry.count, entry.value)
+                end
+                since = math.min(since, character.itemSalesSince or since)
+            end
+        end
+        return merged, since
+    end
+    if period == "today" or period == "week" then
+        local oldest = OldestDay(period == "today" and 1 or 7)
+        local merged = {}
+        for day, totals in pairs(charData.daySales) do
+            if day >= oldest then
+                for itemID, entry in pairs(totals) do
+                    AddToTotals(merged, itemID, entry.quality, entry.count, entry.value)
+                end
+            end
+        end
+        return merged, charData.itemSalesSince
+    end
+    return charData.itemSales, charData.itemSalesSince
+end
+
 -- Records a sale in the history entry for this vendor visit. source is
 -- "goblin" or "you".
 -- The history entry for the open vendor window, created on first use.
@@ -1487,6 +1579,7 @@ local function RecordSale(entry, source)
         count = entry.count, value = entry.price, source = source,
     }
     AddEarnings(entry.price, 1, source == "goblin")
+    AddItemSale(charData, entry.itemID, quality, entry.count, entry.price, time())
     if source == "goblin" then
         session.lastSale = GetTime()
         ns.CheckMilestones()
@@ -1679,6 +1772,106 @@ function ns.GetHistory()
     return charData.history
 end
 
+-- The characters Pocket Goblin keeps data for, this one first, then by
+-- name: { key, name, fullName (with the surname, once known), earned (all
+-- vendor sales), lastVisit (time, or nil), current, sameName }.
+function ns.GetCharacters()
+    local list = {}
+    for key, character in pairs(PocketGoblinDB.characters) do
+        local name = key:match("^(.-) %- ") or key
+        local lastVisit = character.history and character.history[1]
+        list[#list + 1] = {
+            key = key, name = name, fullName = character.fullName or name,
+            earned = character.allEarned or 0, lastVisit = lastVisit and lastVisit.time,
+            current = key == characterKey,
+        }
+        local entry = list[#list]
+        -- The same name elsewhere: likely this character under an older realm name.
+        entry.sameName = not entry.current and entry.name == characterKey:match("^(.-) %- ")
+    end
+    table.sort(list, function(a, b)
+        if a.current ~= b.current then return a.current end
+        if a.fullName ~= b.fullName then return a.fullName < b.fullName end
+        return (a.lastVisit or 0) > (b.lastVisit or 0)
+    end)
+    return list
+end
+
+-- Adds source's data (the same character saved under an older realm name)
+-- to target: history, earnings, repairs, worn gear, milestones and what was
+-- sold. target is set up; source's itemSales too (SetUpItemSales).
+local function MergeCharacterData(target, source)
+    for _, visit in ipairs(source.history or {}) do target.history[#target.history + 1] = visit end
+    table.sort(target.history, function(a, b) return (a.time or 0) > (b.time or 0) end)
+    for i = #target.history, MAX_HISTORY + 1, -1 do target.history[i] = nil end
+    for _, key in ipairs({ "earned", "sold", "allEarned", "repairs", "repairsGuild" }) do
+        target[key] = (target[key] or 0) + (source[key] or 0)
+    end
+    if source.day == target.day then
+        for _, key in ipairs({ "today", "allToday", "repairsToday", "repairsGuildToday" }) do
+            target[key] = (target[key] or 0) + (source[key] or 0)
+        end
+    end
+    local biggest = source.biggestRepair
+    if biggest and (not target.biggestRepair or biggest.cost > target.biggestRepair.cost) then
+        target.biggestRepair = biggest
+    end
+    for itemID, worn in pairs(source.worn or {}) do
+        local mine = target.worn[itemID]
+        if mine then
+            mine.seen = math.max(mine.seen or 0, worn.seen or 0)
+            mine.equips = (mine.equips or 0) + (worn.equips or 0)
+        else
+            target.worn[itemID] = worn
+        end
+    end
+    for key in pairs(source.milestones or {}) do target.milestones[key] = true end
+    for itemID, entry in pairs(source.itemSales) do
+        AddToTotals(target.itemSales, itemID, entry.quality, entry.count, entry.value)
+    end
+    for day, totals in pairs(source.daySales) do
+        target.daySales[day] = target.daySales[day] or {}
+        for itemID, entry in pairs(totals) do
+            AddToTotals(target.daySales[day], itemID, entry.quality, entry.count, entry.value)
+        end
+    end
+    target.itemSalesSince = math.min(target.itemSalesSince or time(), source.itemSalesSince or time())
+end
+
+-- Moves another entry's data into the character you're playing, for one
+-- that shows up twice because the game renamed its realm.
+function ns.MergeCharacter(key)
+    local source = PocketGoblinDB.characters[key]
+    if key == characterKey or not source then return end
+    SetUpItemSales(source)
+    MergeCharacterData(charData, source)
+    PocketGoblinDB.characters[key] = nil
+    PocketGoblinDB.profileKeys[key] = nil
+    ns.CheckMilestones(true) -- merged milestones, without cheering
+    RefreshWindow()
+end
+
+-- Forever's characters have a surname, which UnitFullName gives with the
+-- first name once you're logged in (not yet while addons load). Saved for
+-- the Characters card; tries again a little later if it's still missing.
+local function SaveFullName(retry)
+    local first, surname = UnitFullName("player")
+    if surname and surname ~= "" then
+        charData.fullName = first .. " " .. surname
+    elseif retry then
+        C_Timer.After(5, function() SaveFullName(false) end)
+    end
+end
+
+-- Forgets a character's history, earnings and totals, and which profile it
+-- used (the profile itself stays). Not the character you're playing.
+function ns.ForgetCharacter(key)
+    if key == characterKey then return end
+    PocketGoblinDB.characters[key] = nil
+    PocketGoblinDB.profileKeys[key] = nil
+    RefreshWindow()
+end
+
 -- Earnings as { session, today, character, account } tables of
 -- { junk = Pocket Goblin's sales, all = every vendor sale, repairs = repairs
 -- paid from your gold, guildRepairs = repairs the guild paid }. character and
@@ -1792,11 +1985,13 @@ end
 -- Runs after every buyback, whether from Pocket Goblin or the vendor's own
 -- Buyback tab: marks the sale as bought back and takes it off the earnings.
 local function OnBuyback(index)
-    local matches = MatchSales(buybackSnapshot)
+    local matches, visits = MatchSales(buybackSnapshot)
     for sold, matchedIndex in pairs(matches) do
         if matchedIndex == index then
             sold.boughtBack = true
             AddEarnings(-sold.value, -1, sold.source ~= "you")
+            AddItemSale(charData, sold.itemID, sold.quality, -sold.count, -sold.value,
+                visits[sold] and visits[sold].time or time())
             Summary(ns.Say("boughtBack", L["Bought back %s."], sold.link .. (sold.count > 1 and (" x" .. sold.count) or "")))
             break
         end
@@ -2857,6 +3052,20 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         characterKey = UnitName("player") .. " - " .. GetRealmName()
         ns.freshInstall = MigrateSavedVariables() -- no tour or "what's new" for existing installs
         ns.account = PocketGoblinDB -- account-wide: the news and tour state (News.lua, Tour.lua)
+        -- The game can rename the realm (Forever's went from "CAMWOW EU5 Realm 8
+        -- PvP" to no name). Each character's GUID is saved with its data, so
+        -- after a rename it carries on under the new name.
+        local guid, renamedFrom = UnitGUID("player"), nil
+        for key, character in pairs(guid and PocketGoblinDB.characters or {}) do
+            if key ~= characterKey and character.guid == guid then renamedFrom = key end
+        end
+        if renamedFrom and not PocketGoblinDB.characters[characterKey] then
+            local characters, profileKeys = PocketGoblinDB.characters, PocketGoblinDB.profileKeys
+            characters[characterKey], characters[renamedFrom] = characters[renamedFrom], nil
+            profileKeys[characterKey] = profileKeys[characterKey] or profileKeys[renamedFrom]
+            profileKeys[renamedFrom] = nil
+            renamedFrom = nil
+        end
         local name = PocketGoblinDB.profileKeys[characterKey]
         LoadProfile(PocketGoblinDB.profiles[name] and name or DEFAULT_PROFILE)
         charData = PocketGoblinDB.characters[characterKey] or {}
@@ -2867,6 +3076,9 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         end
         local firstMilestoneCheck = charData.milestones == nil
         ApplyDefaults(charData, CHARACTER_DEFAULTS)
+        for _, character in pairs(PocketGoblinDB.characters) do SetUpItemSales(character) end
+        if renamedFrom then ns.MergeCharacter(renamedFrom) end -- saved under both names
+        charData.guid = guid or charData.guid
         if firstMilestoneCheck then ns.CheckMilestones(true) end
         if not charData.repairMilestones then
             -- Repair milestones came in 1.7: count what's already spent without cheering.
@@ -2875,6 +3087,8 @@ frame:SetScript("OnEvent", function(_, event, arg1)
             FindBiggestRepair()
         end
     elseif event == "PLAYER_LOGIN" then
+        charData.guid = charData.guid or UnitGUID("player") -- in case it wasn't known at ADDON_LOADED
+        if UnitFullName then SaveFullName(true) end
         HookContainerFrames()
         RegisterBaganatorPlugin()
         ns.UpdateMinimapButton()

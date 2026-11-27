@@ -2377,6 +2377,320 @@ local function UpdateHistoryRow(row, entry)
     row.name:SetPoint("RIGHT", byYou and row.source or row.detail, "LEFT", -10, 0)
 end
 
+------------------------------------------------------------------------
+-- What you sold: the History page's other view. Every vendor sale in a
+-- period (GetItemSales), grouped by item type or quality, as bars with
+-- their gold, item count and share; under them the items that made the
+-- most, for one group after a click on it.
+------------------------------------------------------------------------
+
+local SOLD_PERIODS = {
+    { "today", L["Today"] }, { "week", L["Last 7 days"] },
+    { "character", L["This character"] }, { "account", L["All characters"] },
+}
+local SOLD_GROUPS = { { "type", L["Type"] }, { "quality", L["Quality"] } }
+local function SoldFilter() return ns.db.filters.history end
+-- The view's helpers live in this block (UI.lua is close to Lua's limit of
+-- 200 locals at the top of a file).
+local RefreshSold, BuildSoldView
+do
+    local GROUP_HEIGHT = 30
+    local TOP_ITEMS = 15
+    local MISC, JUNK_SUBCLASS = 15, 0 -- Miscellaneous > Junk: most greys
+
+    -- Items this game doesn't know (sold on a beta or another version of the
+    -- game, from a copied WTF folder) are left out.
+    local function KnownItem(itemID)
+        return C_Item.GetItemInfoInstant(itemID) ~= nil
+    end
+
+    -- The group an item falls in, and that group's name and bar color.
+    local function GroupOf(itemID, entry, group)
+        if group == "quality" then
+            local quality = entry.quality or select(3, C_Item.GetItemInfo(itemID))
+            return quality or "unknown"
+        end
+        local _, _, _, _, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
+        if classID == MISC and subClassID == JUNK_SUBCLASS then return "junk" end
+        return classID or "unknown"
+    end
+
+    local function GroupLabel(key, group)
+        if key == "unknown" then return L["Unknown"] end
+        if group == "quality" then return _G["ITEM_QUALITY" .. key .. "_DESC"] or (L["Quality "] .. key) end
+        if key == "junk" then return ItemSubClassName(MISC, JUNK_SUBCLASS) end
+        return ItemClassName(key)
+    end
+
+    local function GroupColor(key, group)
+        if group == "quality" and key ~= "unknown" then return QualityColor(key) end
+        return C.gold
+    end
+
+    local function ItemCount(count)
+        return count == 1 and L["1 item"] or L["%s items"]:format(BreakUpLargeNumbers and BreakUpLargeNumbers(count) or count)
+    end
+
+    local function Share(value, total)
+        if total <= 0 then return "" end
+        local percent = value / total * 100
+        if percent > 0 and percent < 1 then return "<1%" end
+        return math.floor(percent + 0.5) .. "%"
+    end
+
+    -- A group's row: name, a bar as long as its share of the biggest group,
+    -- gold, item count and share. Click to show its top items.
+    local function CreateGroupRow(content)
+        local row = CreateFrame("Button", nil, content)
+        row:SetHeight(GROUP_HEIGHT)
+        row.selected = Rounded(row, "BACKGROUND", C.goldDim)
+        local hover = Rounded(row, "BACKGROUND", { 1, 1, 1, 0.045 })
+        hover:Hide()
+
+        row.name = Text(row, 13, C.text)
+        row.name:SetPoint("LEFT", 10, 0)
+        row.name:SetWidth(124)
+        row.name:SetWordWrap(false)
+
+        row.share = Text(row, 12, C.muted)
+        row.share:SetPoint("RIGHT", -10, 0)
+        row.share:SetWidth(40)
+        row.share:SetJustifyH("RIGHT")
+        row.count = Text(row, 12, C.muted)
+        row.count:SetPoint("RIGHT", row.share, "LEFT", -6, 0)
+        row.count:SetWidth(84)
+        row.count:SetJustifyH("RIGHT")
+        row.gold = Text(row, 13, C.text)
+        row.gold:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
+        row.gold:SetWidth(110)
+        row.gold:SetJustifyH("RIGHT")
+
+        -- The track is a frame, so the bar follows the window's width.
+        local track = CreateFrame("Frame", nil, row)
+        track:SetHeight(8)
+        track:SetPoint("LEFT", 144, 0)
+        track:SetPoint("RIGHT", row.gold, "LEFT", -16, 0)
+        local trackBg = track:CreateTexture(nil, "ARTWORK")
+        trackBg:SetAllPoints()
+        trackBg:SetColorTexture(1, 1, 1, 0.05)
+        row.fill = track:CreateTexture(nil, "ARTWORK", nil, 1)
+        row.fill:SetPoint("TOPLEFT")
+        row.fill:SetPoint("BOTTOMLEFT")
+        track.fraction = 0
+        function row:SetFraction(fraction)
+            track.fraction = fraction
+            row.fill:SetWidth(math.max(1, track:GetWidth() * fraction))
+        end
+        track:SetScript("OnSizeChanged", function(self, width)
+            row.fill:SetWidth(math.max(1, width * self.fraction))
+        end)
+
+        row:SetScript("OnEnter", function() hover:Show() end)
+        row:SetScript("OnLeave", function() hover:Hide() end)
+        row:SetScript("OnClick", function(self)
+            PlayToggleSound(true)
+            history.selectedGroup = history.selectedGroup ~= self.key and self.key or nil
+            ns.RefreshWindow()
+        end)
+        return row
+    end
+
+    -- One of the top items: icon with its quality border, name, how many and gold.
+    local function CreateTopItemRow(content)
+        local row = CreateFrame("Button", nil, content)
+        row:SetHeight(ITEM_HEIGHT)
+        local hover = Rounded(row, "BACKGROUND", { 1, 1, 1, 0.045 })
+        hover:Hide()
+        row.border = row:CreateTexture(nil, "ARTWORK", nil, 1)
+        row.border:SetSize(22, 22)
+        row.border:SetPoint("LEFT", 10, 0)
+        row.icon = row:CreateTexture(nil, "ARTWORK", nil, 2)
+        row.icon:SetSize(20, 20)
+        row.icon:SetPoint("CENTER", row.border)
+        row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        row.gold = Text(row, 12, C.text)
+        row.gold:SetPoint("RIGHT", -10, 0)
+        row.gold:SetJustifyH("RIGHT")
+        row.count = Text(row, 12, C.muted)
+        row.count:SetPoint("RIGHT", -136, 0)
+        row.count:SetJustifyH("RIGHT")
+        row.name = Text(row, 13, C.text)
+        row.name:SetPoint("LEFT", row.border, "RIGHT", 8, 0)
+        row.name:SetPoint("RIGHT", row.count, "LEFT", -10, 0)
+        row.name:SetWordWrap(false)
+
+        row:SetScript("OnEnter", function(self)
+            hover:Show()
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink("item:" .. self.itemID)
+            GameTooltip:Show()
+        end)
+        row:SetScript("OnLeave", function()
+            hover:Hide()
+            GameTooltip_Hide()
+        end)
+        return row
+    end
+
+    function RefreshSold()
+        local sold = history.sold
+        local filter = SoldFilter()
+        local group = filter.group
+        local totals, since = ns.GetItemSales(filter.period)
+        -- The rows span the content; make sure it has the scroll area's width.
+        local width = sold.scroll:GetWidth()
+        if width and width > 1 then sold.content:SetWidth(width) end
+
+        -- Add up the groups, and list the items of the selected one.
+        local groups, byKey = {}, {}
+        local totalValue, totalCount = 0, 0
+        for itemID, entry in pairs(totals) do
+            if entry.value > 0 and KnownItem(itemID) then
+                local key = GroupOf(itemID, entry, group)
+                local g = byKey[key]
+                if not g then
+                    g = { key = key, value = 0, count = 0 }
+                    byKey[key] = g
+                    groups[#groups + 1] = g
+                end
+                g.value = g.value + entry.value
+                g.count = g.count + entry.count
+                totalValue = totalValue + entry.value
+                totalCount = totalCount + entry.count
+            end
+        end
+        table.sort(groups, function(a, b)
+            if a.value ~= b.value then return a.value > b.value end
+            return tostring(a.key) < tostring(b.key)
+        end)
+        if history.selectedGroup ~= nil and not byKey[history.selectedGroup] then history.selectedGroup = nil end
+        local selected = history.selectedGroup
+
+        local items = {}
+        for itemID, entry in pairs(totals) do
+            if entry.value > 0 and KnownItem(itemID) and (selected == nil or GroupOf(itemID, entry, group) == selected) then
+                items[#items + 1] = { itemID = itemID, entry = entry }
+            end
+        end
+        table.sort(items, function(a, b)
+            if a.entry.value ~= b.entry.value then return a.entry.value > b.entry.value end
+            return a.itemID < b.itemID
+        end)
+
+        sold.empty:SetShown(#groups == 0)
+        sold.summary:SetShown(#groups > 0)
+        sold.topTitle:SetShown(#groups > 0)
+        sold.summary:SetText(L["%s for %s"]:format(ItemCount(totalCount), FormatMoney(totalValue)))
+
+        local y = -34
+        local biggest = groups[1] and groups[1].value or 1
+        for i, g in ipairs(groups) do
+            local row = sold.groupRows[i] or CreateGroupRow(sold.content)
+            sold.groupRows[i] = row
+            row.key = g.key
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", 0, y)
+            row:SetPoint("TOPRIGHT", 0, y)
+            row.selected:SetShown(g.key == selected)
+            row.name:SetText(GroupLabel(g.key, group))
+            local color = GroupColor(g.key, group)
+            local nameColor = group == "quality" and color or C.text
+            row.name:SetTextColor(nameColor[1], nameColor[2], nameColor[3])
+            row.fill:SetColorTexture(color[1], color[2], color[3], 0.85)
+            row:SetFraction(g.value / biggest)
+            row.gold:SetText(FormatMoney(g.value))
+            row.count:SetText(ItemCount(g.count))
+            row.share:SetText(Share(g.value, totalValue))
+            row:Show()
+            y = y - GROUP_HEIGHT
+        end
+        for i = #groups + 1, #sold.groupRows do sold.groupRows[i]:Hide() end
+
+        -- Top items, of everything or of the selected group.
+        y = y - 18
+        sold.topTitle:ClearAllPoints()
+        sold.topTitle:SetPoint("TOPLEFT", 10, y)
+        sold.topTitle:SetText(selected ~= nil
+            and L["TOP ITEMS: %s"]:format(GroupLabel(selected, group):upper()) or L["TOP ITEMS"])
+        sold.showAll:SetShown(selected ~= nil)
+        y = y - 24
+        local shown = math.min(#items, TOP_ITEMS)
+        for i = 1, shown do
+            local item = items[i]
+            local row = sold.itemRows[i] or CreateTopItemRow(sold.content)
+            sold.itemRows[i] = row
+            local info = ItemEntry(item.itemID)
+            row.itemID = item.itemID
+            row.icon:SetTexture(info.icon or QUESTION_MARK)
+            local color = QualityColor(item.entry.quality or info.quality)
+            row.border:SetColorTexture(color[1], color[2], color[3], 0.9)
+            row.name:SetText(info.name)
+            row.name:SetTextColor(color[1], color[2], color[3])
+            row.count:SetText(ItemCount(item.entry.count))
+            row.gold:SetText(FormatMoney(item.entry.value))
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", 0, y)
+            row:SetPoint("TOPRIGHT", 0, y)
+            row:Show()
+            y = y - ITEM_HEIGHT
+        end
+        for i = shown + 1, #sold.itemRows do sold.itemRows[i]:Hide() end
+        sold.more:SetShown(#items > shown)
+        if #items > shown then
+            sold.more:ClearAllPoints()
+            sold.more:SetPoint("TOPLEFT", 10, y - 6)
+            sold.more:SetText(L["and %d more items"]:format(#items - shown))
+            y = y - 26
+        end
+
+        sold.content:SetHeight(-y + 8)
+        sold.scroll.UpdateScrollBar()
+        history.note:SetText(L["Every vendor sale counts, by Pocket Goblin, you or another addon, minus what you "
+            .. "bought back. Counted since %s."]:format(date("%b %d, %Y", since or time())))
+    end
+
+    -- The view's scroll area, in the same place as the visits'.
+    function BuildSoldView(area)
+        local sold = { groupRows = {}, itemRows = {} }
+        history.sold = sold
+        sold.area = CreateFrame("Frame", nil, area:GetParent())
+        sold.area:SetAllPoints(area)
+        sold.scroll, sold.content = CreateScrollArea(sold.area)
+        sold.scroll:SetPoint("TOPLEFT")
+        sold.scroll:SetPoint("BOTTOMRIGHT", -12, 0)
+
+        sold.summary = Text(sold.content, 13, C.text)
+        sold.summary:SetPoint("TOPLEFT", 10, -6)
+
+        sold.topTitle = Text(sold.content, 11, C.muted)
+        sold.showAll = CreateFrame("Button", nil, sold.content)
+        sold.showAll:SetSize(80, 18)
+        sold.showAll:SetPoint("LEFT", sold.topTitle, "RIGHT", 10, 0)
+        local showAllText = Text(sold.showAll, 11, C.gold)
+        showAllText:SetPoint("LEFT")
+        showAllText:SetText(L["Show all"])
+        sold.showAll:SetScript("OnEnter", function() showAllText:SetTextColor(C.goldHover[1], C.goldHover[2], C.goldHover[3]) end)
+        sold.showAll:SetScript("OnLeave", function() showAllText:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end)
+        sold.showAll:SetScript("OnClick", function()
+            history.selectedGroup = nil
+            ns.RefreshWindow()
+        end)
+        sold.more = Text(sold.content, 12, C.muted)
+
+        local empty = CreateFrame("Frame", nil, sold.area)
+        empty:SetAllPoints()
+        local emptyIcon = Icon(empty, "icon-history", 40, { 1, 1, 1, 0.12 })
+        emptyIcon:SetPoint("CENTER", 0, 24)
+        local emptyTitle = Text(empty, 15, C.text)
+        emptyTitle:SetPoint("TOP", emptyIcon, "BOTTOM", 0, -12)
+        emptyTitle:SetText(L["Nothing sold in this period"])
+        local emptyBody = Text(empty, 12, C.muted)
+        emptyBody:SetPoint("TOP", emptyTitle, "BOTTOM", 0, -6)
+        emptyBody:SetText(L["What you sell at vendors adds up here, by type and quality."])
+        sold.empty = empty
+    end
+end
+
 local function BuildHistoryPage(page)
     -- Earnings tiles
     local stats = CreateFrame("Frame", nil, page)
@@ -2443,15 +2757,42 @@ local function BuildHistoryPage(page)
     Rounded(card, "BACKGROUND", C.card)
     Rounded(card, "BORDER", C.cardBorder, "rounded-border")
 
-    local bar = card:CreateTexture(nil, "ARTWORK")
-    bar:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 1)
-    bar:SetSize(3, 14)
-    bar:SetPoint("TOPLEFT", 20, -22)
-    local title = Text(card, 13, C.text)
-    title:SetPoint("LEFT", bar, "RIGHT", 10, 0)
-    title:SetText(L["RECENT VISITS"])
+    -- Visits or What you sold, each with its own controls on the right.
+    history.view = CreateSegmented(card, { { "visits", L["Visits"] }, { "sold", L["What you sold"] } },
+        function() return SoldFilter().view end,
+        function(view)
+            SoldFilter().view = view
+            ns.RefreshWindow()
+        end)
+    history.view:SetPoint("TOPLEFT", 16, -12)
     history.count = CreateBadge(card, C.muted, { 1, 1, 1, 0.06 })
-    history.count:SetPoint("LEFT", title, "RIGHT", 10, 0)
+    history.count:SetPoint("LEFT", history.view, "RIGHT", 10, 0)
+
+    history.periodMenu = CreateDropdown(card, 140,
+        function()
+            for _, option in ipairs(SOLD_PERIODS) do
+                if option[1] == SoldFilter().period then return option[2] end
+            end
+            return SOLD_PERIODS[3][2]
+        end,
+        function(root)
+            for _, option in ipairs(SOLD_PERIODS) do
+                root:CreateRadio(option[2], function() return SoldFilter().period == option[1] end, function()
+                    SoldFilter().period = option[1]
+                    history.periodMenu:UpdateLabel()
+                    ns.RefreshWindow()
+                end)
+            end
+        end)
+    history.periodMenu:SetPoint("TOPRIGHT", -16, -14)
+    history.groupSwitch = CreateSegmented(card, SOLD_GROUPS,
+        function() return SoldFilter().group end,
+        function(group)
+            SoldFilter().group = group
+            history.selectedGroup = nil
+            ns.RefreshWindow()
+        end)
+    history.groupSwitch:SetPoint("RIGHT", history.periodMenu, "LEFT", -8, 0)
 
     local function sourceFilter() return ns.db.filters.history end
     history.sourceMenu = CreateDropdown(card, 150,
@@ -2478,6 +2819,8 @@ local function BuildHistoryPage(page)
     history.scroll, history.content = CreateScrollArea(area)
     history.scroll:SetPoint("TOPLEFT")
     history.scroll:SetPoint("BOTTOMRIGHT", -12, 0)
+    history.visitsArea = area
+    BuildSoldView(area)
 
     local empty = CreateFrame("Frame", nil, area)
     empty:SetAllPoints()
@@ -2491,11 +2834,9 @@ local function BuildHistoryPage(page)
     emptyBody:SetText(L["Sales and repairs show up here after you visit a vendor."])
     history.empty = empty
 
-    local note = Text(page, 12, C.muted)
-    note:SetPoint("BOTTOMLEFT", 22, 22)
-    note:SetPoint("BOTTOMRIGHT", -22, 22)
-    note:SetText(L["Buy back works while a vendor is open, for items still in its buyback list "
-        .. "(the last 12 items you sold)."])
+    history.note = Text(page, 12, C.muted)
+    history.note:SetPoint("BOTTOMLEFT", 22, 22)
+    history.note:SetPoint("BOTTOMRIGHT", -22, 22)
 end
 
 local function RefreshHistory()
@@ -2511,6 +2852,21 @@ local function RefreshHistory()
         tile.net:SetTextColor(color[1], color[2], color[3])
     end
     history.sourceMenu:UpdateLabel()
+
+    local soldView = SoldFilter().view == "sold"
+    history.visitsArea:SetShown(not soldView)
+    history.sold.area:SetShown(soldView)
+    history.count:SetShown(not soldView)
+    history.sourceMenu:SetShown(not soldView)
+    history.periodMenu:SetShown(soldView)
+    history.groupSwitch:SetShown(soldView)
+    if soldView then
+        history.periodMenu:UpdateLabel()
+        RefreshSold()
+        return
+    end
+    history.note:SetText(L["Buy back works while a vendor is open, for items still in its buyback list "
+        .. "(the last 12 items you sold)."])
 
     -- Visits with the sales that match the "Sold by" filter, then their
     -- repairs; each visit's total is its sales, minus what was bought back.
@@ -2762,6 +3118,63 @@ local function BuildGeneralPage(page)
                 return CreateToggle(parent, function() return ns.account.newsChat ~= false end, ns.SetNewsChat)
             end)
         NewsDot(card, "newsChat")
+        finish()
+
+        -- Characters: one row each, with Forget for all but this one, and
+        -- Merge for this one under an older realm name.
+        card, finish = addCard(L["Characters"])
+        AddRow(card, L["Your characters"],
+            L["Pocket Goblin keeps each character's history and earnings. If one shows up twice because the game "
+                .. "renamed its realm, log on to it and merge the other entry into it. Forget a character you deleted, "
+                .. "or one that came along from another version of the game, and its sales leave All characters. "
+                .. "Profiles stay either way."])
+        local function Details(character)
+            local sold = L["Sold %s in all"]:format(character.earned > 0 and GetMoneyString(character.earned, true) or "0")
+            if not character.lastVisit then return sold end
+            return sold .. "  ·  " .. L["last vendor visit %s"]:format(date("%b %d, %Y", character.lastVisit))
+        end
+        local currentRow
+        -- Takes a forgotten or merged character's row away.
+        local function RemoveRow(row)
+            for i = #card.rows, 1, -1 do
+                if card.rows[i] == row then table.remove(card.rows, i) end
+            end
+            row.title:Hide()
+            row.desc:Hide()
+            row.control:Hide()
+            if currentRow then currentRow.desc:SetText(Details(ns.GetCharacters()[1])) end -- merged sales
+            page.Restack()
+        end
+        for _, character in ipairs(ns.GetCharacters()) do
+            AddRow(card, character.fullName, Details(character), function(parent)
+                if character.current then
+                    local badge = CreateBadge(parent, C.muted, { 1, 1, 1, 0.06 })
+                    badge:SetText(L["THIS CHARACTER"])
+                    return badge
+                end
+                local holder = CreateFrame("Frame", nil, parent)
+                holder:SetHeight(32)
+                local forget = CreateConfirmButton(holder, L["Forget"], 90, "danger", function()
+                    ns.ForgetCharacter(character.key)
+                    RemoveRow(holder.row)
+                end)
+                forget:SetPoint("RIGHT")
+                local width = 90
+                if character.sameName then
+                    local merge = CreateConfirmButton(holder, L["Merge into this character"], 190, "primary", function()
+                        ns.MergeCharacter(character.key)
+                        RemoveRow(holder.row)
+                    end)
+                    merge:SetPoint("RIGHT", forget, "LEFT", -8, 0)
+                    width = width + 8 + 190
+                end
+                holder:SetWidth(width)
+                return holder
+            end)
+            -- The buttons find their row (AddRow's entry) to take it away.
+            local entry = card.rows[#card.rows]
+            if character.current then currentRow = entry else entry.control.row = entry end
+        end
         finish()
     end)
 end

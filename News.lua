@@ -13,6 +13,14 @@ local L = ns.L
 -- a dot.
 ns.WHATS_NEW = {
     {
+        version = "1.12.0",
+        chat = L["a breakdown of what you sell, by item type and quality"],
+        points = {
+            { text = L["What you sold: on the History page, see which kinds of items earn you the most gold, and your top items."],
+                page = "history" },
+        },
+    },
+    {
         version = "1.11.0",
         chat = L["a short tour of your bags and the vendor panel, and this news"],
         points = {

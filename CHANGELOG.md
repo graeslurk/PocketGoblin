@@ -2,7 +2,12 @@
 
 ## Unreleased
 
+New:
+- **What you sold**: the History page has a second view, next to your visits. It adds up everything you sell at vendors (by Pocket Goblin, you or another addon, minus buybacks) by item type or by quality: a bar for each, with its gold, how many items and its share. Below are the items that made you the most; click a type or quality to see its own. Choose today, the last 7 days, this character or all characters. The counting starts with the visits your history already holds. Items this version of the game doesn't know, sold on a beta or another version and brought along in a copied WTF folder, are left out
+- **Characters** card on the General page: every character Pocket Goblin keeps history and earnings for. **Forget** one you deleted, or one copied over from another version of the game, and its sales leave the All characters totals. A character that shows up twice because the game renamed its realm gets **Merge into this character**: log on to it and its history, earnings, sales and milestones come together again
+
 Fixed:
+- **A renamed realm no longer splits your characters**: when Forever stopped reporting its realm name, Pocket Goblin took every character for a new one, with an empty history and earnings. Characters are now recognised by their game ID too, so they carry on after a rename. Join the halves from before with **Merge into this character** on the General page
 - **RestedXP Guides and Cheap Upgrades sell junk too**: Pocket Goblin now warns when their auto-sell is on (**Auto Sell Junk** in RestedXP Guides, **Sell grey items automatically** in Cheap Upgrades), like it does for Leatrix Plus or EllesmereUI. They sell your greys the moment a vendor opens, before Pocket Goblin, so those sales showed as yours in the history
 - The vendor panel no longer suggests auto-selling grey items: they're junk by their own rule (**Grey and white items**)
 

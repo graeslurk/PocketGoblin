@@ -3540,7 +3540,7 @@ local function BuildAboutPage(page)
             .. "is open you can buy back items still in its buyback list (the last 12 items you sold), one by one "
             .. "or all at once."])
         AddRow(card, L["Suggestions"], L["Sell the same item yourself a few times and the vendor panel offers to "
-            .. "put it on the auto-sell list."])
+            .. "put it on the auto-sell list. Buy back something Pocket Goblin sold twice and it offers to keep it."])
         finish()
 
         card, finish = addCard(L["Help"])

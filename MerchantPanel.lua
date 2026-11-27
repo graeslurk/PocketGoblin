@@ -255,7 +255,8 @@ local function CreatePanel()
     panel.sell:SetPoint("TOPRIGHT", -12, -10)
     panel.sell:SetScript("OnClick", function() ns.SellJunk(true) end)
 
-    -- Suggestion: an item you keep selling yourself, with yes and no buttons.
+    -- Suggestion: an item you keep selling yourself (auto-sell it?) or keep
+    -- buying back (keep it?), with yes and no buttons.
     local suggest = CreateFrame("Frame", nil, panel)
     suggest:SetHeight(SUGGEST_HEIGHT)
     local suggestLine = suggest:CreateTexture(nil, "ARTWORK")
@@ -279,11 +280,11 @@ local function CreatePanel()
     suggest.yes = UI.CreateButton(suggest, L["Auto-sell"], 86, true)
     suggest.yes:SetHeight(24)
     suggest.yes:SetPoint("BOTTOMRIGHT", -12, 10)
-    suggest.yes:SetScript("OnClick", function() ns.AnswerSuggestion(suggest.itemID, true) end)
+    suggest.yes:SetScript("OnClick", function() ns.AnswerSuggestion(suggest.itemID, true, suggest.kind) end)
     suggest.no = UI.CreateButton(suggest, L["No thanks"], 86)
     suggest.no:SetHeight(24)
     suggest.no:SetPoint("RIGHT", suggest.yes, "LEFT", -6, 0)
-    suggest.no:SetScript("OnClick", function() ns.AnswerSuggestion(suggest.itemID, false) end)
+    suggest.no:SetScript("OnClick", function() ns.AnswerSuggestion(suggest.itemID, false, suggest.kind) end)
 
     -- Hovering the item shows its tooltip.
     local itemHover = CreateFrame("Frame", nil, suggest)
@@ -415,7 +416,7 @@ function ns.UpdateMerchantPanel()
     y = y + SELL_HEIGHT
 
     -- The suggestion, if there is one, sits between selling and buying back.
-    local suggestID, suggestCount = ns.GetSuggestion()
+    local suggestID, suggestCount, suggestKind = ns.GetSuggestion()
     local suggest = panel.suggest
     suggest:SetShown(suggestID ~= nil)
     suggest:SetPoint("TOPLEFT", 0, -y)
@@ -423,13 +424,21 @@ function ns.UpdateMerchantPanel()
     if suggestID then
         local name, _, quality, _, _, _, _, _, _, icon = C_Item.GetItemInfo(suggestID)
         local color = QualityColor(quality)
-        suggest.itemID = suggestID
+        suggest.itemID, suggest.kind = suggestID, suggestKind
         suggest.icon:SetTexture(icon)
         suggest.name:SetText(name)
         suggest.name:SetTextColor(color[1], color[2], color[3])
-        suggest.text:SetText(ns.GoblinVoice()
-            and (L["Psst! You've hawked this %d times yourself. Shall I handle it from now on?"]):format(suggestCount)
-            or (L["You've sold this yourself %d times. Auto-sell it from now on?"]):format(suggestCount))
+        local keep = suggestKind == "keep"
+        suggest.yes.label:SetText(keep and L["Keep it"] or L["Auto-sell"])
+        if keep then
+            suggest.text:SetText(ns.GoblinVoice()
+                and (L["Oi, you've bought this back from me %d times. Shall I keep my hands off it?"]):format(suggestCount)
+                or (L["You've bought this back %d times after Pocket Goblin sold it. Keep it from now on?"]):format(suggestCount))
+        else
+            suggest.text:SetText(ns.GoblinVoice()
+                and (L["Psst! You've hawked this %d times yourself. Shall I handle it from now on?"]):format(suggestCount)
+                or (L["You've sold this yourself %d times. Auto-sell it from now on?"]):format(suggestCount))
+        end
         y = y + SUGGEST_HEIGHT
     end
 

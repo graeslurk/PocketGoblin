@@ -142,6 +142,8 @@ local defaults = {
     addedAt = {},     -- [itemID] = time() it was added to the auto-sell list
     manualSales = {},  -- [itemID] = times you sold it yourself (for auto-sell suggestions)
     noSuggest = {},    -- [itemID] = true: never suggest auto-selling it again
+    buybacks = {},     -- [itemID] = times you bought it back after Pocket Goblin sold it (for keep suggestions)
+    noKeepSuggest = {}, -- [itemID] = true: never suggest keeping it again
     -- List filters in the window. Unset keys (classID etc.) mean "all".
     filters = {
         sell = { qualities = {}, inBags = false, sort = "name" },
@@ -1672,13 +1674,26 @@ end
 
 local SUGGEST_AFTER = 3 -- times you sold an item yourself before it's suggested
 
--- The item you've sold yourself most often (at least SUGGEST_AFTER times)
--- that isn't on a list, wasn't declined and isn't junk already. Never a
--- grey: greys are junk by their own rule, even when a keep rule or a
--- switched-off grey rule left them for you to sell. Returns the item ID and
--- how many times, or nil.
+-- The vendor panel's suggestion. First, keeping an item you bought back at
+-- least twice after Pocket Goblin sold it (not on the keep list, not
+-- declined). Otherwise, auto-selling the item you've sold yourself most
+-- often (at least SUGGEST_AFTER times) that isn't on a list, wasn't
+-- declined and isn't junk already. Never a grey: greys are junk by their own
+-- rule, even when a keep rule or a switched-off grey rule left them for you
+-- to sell. Returns the item ID, how many times and "keep" or "sell", or nil.
 function ns.GetSuggestion()
     local bestID, bestCount
+    for itemID, count in pairs(db.buybacks) do
+        if count >= 2 and db.items[itemID] ~= false and not db.noKeepSuggest[itemID]
+            and (not bestCount or count > bestCount or (count == bestCount and itemID < bestID)) then
+            bestID, bestCount = itemID, count
+        end
+    end
+    if bestID then
+        if C_Item.GetItemInfo(bestID) then return bestID, bestCount, "keep" end
+        C_Item.RequestLoadItemDataByID(bestID) -- try again on the next update
+        return nil
+    end
     for itemID, count in pairs(db.manualSales) do
         if count >= SUGGEST_AFTER and db.items[itemID] == nil and not db.noSuggest[itemID]
             and (not bestCount or count > bestCount or (count == bestCount and itemID < bestID)) then
@@ -1692,19 +1707,28 @@ function ns.GetSuggestion()
             end
         end
     end
-    return bestID, bestCount
+    return bestID, bestCount, bestID and "sell"
 end
 
--- Answers a suggestion: yes puts the item on the auto-sell list, no stops
--- suggesting it.
-function ns.AnswerSuggestion(itemID, accept)
-    db.manualSales[itemID] = nil
-    if accept then
-        ns.SetFlag(itemID, true)
+-- Answers a suggestion (kind "keep" or "sell"): yes puts the item on the
+-- keep or auto-sell list, no stops suggesting it.
+function ns.AnswerSuggestion(itemID, accept, kind)
+    if kind == "keep" then
+        db.buybacks[itemID] = nil
+        if accept then
+            ns.SetFlag(itemID, false)
+        else
+            db.noKeepSuggest[itemID] = true
+        end
     else
-        db.noSuggest[itemID] = true
-        if ns.UpdateMerchantPanel then ns.UpdateMerchantPanel() end
+        db.manualSales[itemID] = nil
+        if accept then
+            ns.SetFlag(itemID, true)
+        else
+            db.noSuggest[itemID] = true
+        end
     end
+    if not accept and ns.UpdateMerchantPanel then ns.UpdateMerchantPanel() end
 end
 
 -- Marks milestones the character has reached; announces them unless quiet.
@@ -2069,6 +2093,11 @@ local function OnBuyback(index)
             AddEarnings(-sold.value, -1, sold.source ~= "you")
             AddItemSale(charData, sold.itemID, sold.quality, -sold.count, -sold.value,
                 visits[sold] and visits[sold].time or time(), SaleRule(sold))
+            -- Pocket Goblin sold it and you wanted it back: after a few times,
+            -- the vendor panel offers to keep it (GetSuggestion).
+            if sold.source ~= "you" and db.items[sold.itemID] ~= false and not db.noKeepSuggest[sold.itemID] then
+                db.buybacks[sold.itemID] = (db.buybacks[sold.itemID] or 0) + 1
+            end
             Summary(ns.Say("boughtBack", L["Bought back %s."], sold.link .. (sold.count > 1 and (" x" .. sold.count) or "")))
             break
         end
@@ -2880,7 +2909,7 @@ do
     -- Profile settings that belong to you, not to the setup you share: where
     -- your minimap button is, your auto-sell suggestions and list filters.
     local PRIVATE = { showMinimap = true, minimapAngle = true, addedAt = true, manualSales = true,
-        noSuggest = true, filters = true }
+        noSuggest = true, buybacks = true, noKeepSuggest = true, filters = true }
     -- Settings with a fixed set of values.
     local CHOICES = {
         messages = { goblin = true, plain = true, summaries = true, none = true, off = true },

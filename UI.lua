@@ -211,6 +211,7 @@ local function SettingToggle(key, onChange)
             function(value)
                 ns.db[key] = value
                 if onChange then onChange() end
+                ns.RefreshWindow() -- dims or brightens the rows that depend on it
             end)
     end
 end
@@ -1886,93 +1887,6 @@ local function BuildRulesPage(page)
             end)
         finish()
 
-        card, finish = addCard(L["Ask first"])
-        local askRow
-        local function showAskNote() askRow.note:SetText(ASK_NOTES[ns.db.askQuality] or "") end
-        askRow = AddWideRow(card, L["Ask before selling"],
-            L["Items a junk rule picks, like outgrown gear, aren't sold on their own: the vendor panel lists them "
-                .. "with Sell and Keep buttons, and they get a coin with a question mark in your bags. Items on your "
-                .. "auto-sell list never ask."],
-            function(parent)
-                local segmented = CreateSegmented(parent, ASK_QUALITIES,
-                    function() return ns.db.askQuality end,
-                    function(quality)
-                        ns.db.askQuality = quality
-                        ns.OnRulesChanged()
-                    end)
-                hooksecurefunc(segmented, "Update", showAskNote) -- also on a profile switch
-                return segmented
-            end,
-            { ASK_NOTES[2], ASK_NOTES[3], ASK_NOTES[4] })
-        showAskNote()
-        finish()
-
-        card, finish = addCard(L["Always keep"])
-        AddRow(card, L["Keep list"],
-            L["Items you never want sold. Alt+Right-click an item and choose \"Never sell\"."],
-            function(parent)
-                local open = CreateButton(parent, L["Keep list"], 110)
-                open:SetScript("OnClick", function()
-                    SetKeepTab("keep")
-                    SelectPage("keep")
-                end)
-                return open
-            end)
-        AddRow(card, L["Names containing"],
-            L["Items whose name contains one of these words, like potion or elixir. Separate them with commas "
-                .. "and press Enter."],
-            function(parent) return CreateWordsInput(parent) end)
-        AddRow(card, L["Item types"], L["Item types that are never sold."],
-            function(parent) return CreateTypePicker(parent) end)
-        finish()
-
-        card, finish = addCard(L["Kept automatically"])
-        AddRow(card, L["Quest gear"], L["Weapons and armor that quests ask for, listed on the Keep list page."],
-            SettingToggle("skipQuestGear", ns.OnRulesChanged))
-        AddRow(card, L["Upgrades"],
-            L["Gear better than what you wear, by Pawn if you have it, otherwise by item level. Never destroyed "
-                .. "either."],
-            SettingToggle("protectUpgrades", ns.OnRulesChanged))
-        AddRow(card, L["Gear you swap to"],
-            L["Green or better gear you've put on more than once in the last 30 days, like a resistance set or a "
-                .. "swap weapon. Gear you wore once and replaced, like while levelling, can still be sold."],
-            SettingToggle("keepWorn", ns.OnRulesChanged))
-        AddRow(card, L["Items to disenchant"],
-            L["On characters with Enchanting: green, blue and purple weapons and armor, so you can disenchant "
-                .. "them instead. Never destroyed either."],
-            SettingToggle("keepDisenchant", ns.OnRulesChanged))
-        AddRow(card, L["Valuable items"], L["Items worth more than the amount below."],
-            SettingToggle("keepValuable", ns.OnRulesChanged))
-        AddDependentRow(card, "keepValuable", L["Worth more than"],
-            L["Price per item. Drag, or type an amount like 1g or 50s."],
-            function(parent)
-                return CreateMoneyInput(parent, VALUABLE_LIMITS,
-                    function() return ns.db.keepValueLimit end,
-                    function(copper)
-                        ns.db.keepValueLimit = copper
-                        ns.OnRulesChanged()
-                    end)
-            end)
-        AddRow(card, L["Worth more at the auction house"],
-            L["Items that earn more at the auction house than at a vendor, also on your auto-sell list. Not "
-                .. "grey items. Needs Auctionator or TradeSkillMaster."],
-            SettingToggle("keepAuction", ns.OnRulesChanged))
-        AddDependentRow(card, "keepAuction", L["Extra profit"],
-            L["How much more an item has to earn there, after the auction house's 5% cut. Drag, or type an "
-                .. "amount like 10s."],
-            function(parent)
-                return CreateMoneyInput(parent, VALUABLE_LIMITS,
-                    function() return ns.db.auctionProfit end,
-                    function(copper)
-                        ns.db.auctionProfit = copper
-                        ns.OnRulesChanged()
-                    end)
-            end)
-        AddRow(card, L["Always protected"],
-            L["Items in an equipment set. Items on your auto-sell list still sell, whatever these rules say, "
-                .. "unless they're worth more at the auction house."])
-        finish()
-
         card, finish = addCard(L["Grey and white items"])
         AddRow(card, L["Sell grey items"],
             L["Every grey item is junk, unless you've put it on the keep list."],
@@ -2050,6 +1964,83 @@ local function BuildRulesPage(page)
             L["Recipes whose tooltip says \"Already known\"."],
             SettingToggle("sellKnownRecipes", ns.OnRulesChanged))
         finish()
+
+        card, finish = addCard(L["Ask first"])
+        local askRow
+        local function showAskNote() askRow.note:SetText(ASK_NOTES[ns.db.askQuality] or "") end
+        askRow = AddWideRow(card, L["Ask before selling"],
+            L["Items a junk rule picks, like outgrown gear, aren't sold on their own: the vendor panel lists them "
+                .. "with Sell and Keep buttons, and they get a coin with a question mark in your bags. Items on your "
+                .. "auto-sell list never ask."],
+            function(parent)
+                local segmented = CreateSegmented(parent, ASK_QUALITIES,
+                    function() return ns.db.askQuality end,
+                    function(quality)
+                        ns.db.askQuality = quality
+                        ns.OnRulesChanged()
+                    end)
+                hooksecurefunc(segmented, "Update", showAskNote) -- also on a profile switch
+                return segmented
+            end,
+            { ASK_NOTES[2], ASK_NOTES[3], ASK_NOTES[4] })
+        showAskNote()
+        finish()
+
+        card, finish = addCard(L["Always keep"])
+        AddRow(card, L["Names containing"],
+            L["Items whose name contains one of these words, like potion or elixir. Separate them with commas "
+                .. "and press Enter."],
+            function(parent) return CreateWordsInput(parent) end)
+        AddRow(card, L["Item types"], L["Item types that are never sold."],
+            function(parent) return CreateTypePicker(parent) end)
+        finish()
+
+        card, finish = addCard(L["Kept automatically"])
+        AddRow(card, L["Quest gear"], L["Weapons and armor that quests ask for, listed on the Keep list page."],
+            SettingToggle("skipQuestGear", ns.OnRulesChanged))
+        AddRow(card, L["Upgrades"],
+            L["Gear better than what you wear, by Pawn if you have it, otherwise by item level. Never destroyed "
+                .. "either."],
+            SettingToggle("protectUpgrades", ns.OnRulesChanged))
+        AddRow(card, L["Gear you swap to"],
+            L["Green or better gear you've put on more than once in the last 30 days, like a resistance set or a "
+                .. "swap weapon. Gear you wore once and replaced, like while levelling, can still be sold."],
+            SettingToggle("keepWorn", ns.OnRulesChanged))
+        AddRow(card, L["Items to disenchant"],
+            L["On characters with Enchanting: green, blue and purple weapons and armor, so you can disenchant "
+                .. "them instead. Never destroyed either."],
+            SettingToggle("keepDisenchant", ns.OnRulesChanged))
+        AddRow(card, L["Valuable items"], L["Items worth more than the amount below."],
+            SettingToggle("keepValuable", ns.OnRulesChanged))
+        AddDependentRow(card, "keepValuable", L["Worth more than"],
+            L["Price per item. Drag, or type an amount like 1g or 50s."],
+            function(parent)
+                return CreateMoneyInput(parent, VALUABLE_LIMITS,
+                    function() return ns.db.keepValueLimit end,
+                    function(copper)
+                        ns.db.keepValueLimit = copper
+                        ns.OnRulesChanged()
+                    end)
+            end)
+        AddRow(card, L["Worth more at the auction house"],
+            L["Items that earn more at the auction house than at a vendor, also on your auto-sell list. Not "
+                .. "grey items. Needs Auctionator or TradeSkillMaster."],
+            SettingToggle("keepAuction", ns.OnRulesChanged))
+        AddDependentRow(card, "keepAuction", L["Extra profit"],
+            L["How much more an item has to earn there, after the auction house's 5% cut. Drag, or type an "
+                .. "amount like 10s."],
+            function(parent)
+                return CreateMoneyInput(parent, VALUABLE_LIMITS,
+                    function() return ns.db.auctionProfit end,
+                    function(copper)
+                        ns.db.auctionProfit = copper
+                        ns.OnRulesChanged()
+                    end)
+            end)
+        AddRow(card, L["Always protected"],
+            L["Items in an equipment set. Items on your auto-sell list still sell, whatever these rules say, "
+                .. "unless they're worth more at the auction house."])
+        finish()
     end)
 end
 
@@ -2090,6 +2081,8 @@ local function BuildBagsPage(page)
         local card, finish = addCard(L["Bag icons"])
         AddRow(card, L["Coin icon on junk"], L["Show a coin in the corner of items that will be sold."],
             SettingToggle("showIcons", ns.OnRulesChanged))
+        AddRow(card, L["Grey out junk"], L["Fade and desaturate items that will be sold."],
+            SettingToggle("greyOut", ns.OnRulesChanged))
         AddRow(card, L["Lock on kept items"], L["Show a lock on items on your keep list, in the coin's size and corner."],
             SettingToggle("keepIcon", ns.OnRulesChanged))
         AddRow(card, L["Equipment set icon"],
@@ -2120,29 +2113,33 @@ local function BuildBagsPage(page)
                         ns.RefreshOverlays()
                     end)
             end)
-        AddRow(card, L["Grey out junk"], L["Fade and desaturate items that will be sold."],
-            SettingToggle("greyOut", ns.OnRulesChanged))
         AddRow(card, "Baganator",
             L["Baganator shows its own junk coin with Pocket Goblin's rules. If it doesn't, choose Pocket Goblin "
                 .. "as its junk plugin."])
         finish()
 
         card, finish = addCard(L["Bag buttons"])
-        AddRow(card, L["Sort button"], L["Stacks and sorts the default bags, junk last. Baganator has its own."],
+        AddRow(card, L["Sort button"],
+            L["Stacks and sorts the default bags, junk last. Other bag addons have their own."],
             SettingToggle("sortButton", ns.UpdateDestroyButtons)) -- moves both buttons
-        AddRow(card, L["Show open button"],
+        AddRow(card, L["Open button"],
             L["Opens clams, sacks and other containers, one per click. Also a hotkey."],
             SettingToggle("openButton", ns.UpdateOpenButtons))
-        AddRow(card, L["Show destroy button"],
-            L["A trash can that destroys your cheapest junk, the same items Pocket Goblin would sell. Hover it "
-                .. "to see what goes."],
+        AddRow(card, L["Trash can"],
+            L["Destroys your cheapest junk, the same items Pocket Goblin would sell. Hover it to see what goes. "
+                .. "Also a hotkey."],
             SettingToggle("destroyButton", ns.UpdateDestroyButtons))
-        AddRow(card, L["Ask before destroying"], L["Confirm the item and its value first."],
+        finish()
+
+        -- For everything that destroys: the trash can, its hotkey and Make room.
+        card, finish = addCard(L["Destroying junk"])
+        AddRow(card, L["Ask before destroying"],
+            L["Confirm the item and its value first, for the trash can, its hotkey and Make room."],
             SettingToggle("destroyConfirm"))
         AddRow(card, L["Protect valuable junk"],
             L["Never destroy junk worth more than the limit below, counting the whole stack."],
             SettingToggle("destroyProtect", ns.UpdateDestroyButtons))
-        dependentRows[#dependentRows + 1] = { AddRow(card, L["Value limit"],
+        AddDependentRow(card, "destroyProtect", L["Value limit"],
             L["Drag, or type an amount like 1s50c."],
             function(parent)
                 return CreateMoneyInput(parent, LIMITS,
@@ -2151,18 +2148,19 @@ local function BuildBagsPage(page)
                         ns.db.destroyLimit = copper
                         ns.UpdateDestroyButtons()
                     end)
-            end), "destroyProtect" }
-        finish()
-
-        card, finish = addCard(L["Full bags"])
+            end)
         AddRow(card, L["Make room when looting"],
-            L["A button under the loot window destroys your cheapest junk and loots, in one click."],
+            L["When your loot doesn't fit, a button under the loot window destroys your cheapest junk and loots, "
+                .. "in one click."],
             SettingToggle("lootMakeRoom"))
         NewsDot(card, "lootMakeRoom")
+        finish()
+
+        card, finish = addCard(L["Bag space"])
         AddRow(card, L["Warn when bags are nearly full"],
             L["The trash can turns red and shows the free slots, with a chat message."],
             SettingToggle("bagWarning", ns.UpdateDestroyButtons))
-        dependentRows[#dependentRows + 1] = { AddRow(card, L["Free slots"],
+        AddDependentRow(card, "bagWarning", L["Free slots"],
             L["Warn at this many free slots or fewer."],
             function(parent)
                 return CreateSlider(parent, 1, 10, 1, function() return ns.db.bagWarningSlots end,
@@ -2171,7 +2169,7 @@ local function BuildBagsPage(page)
                         ns.db.bagWarningSlots = math.floor(value + 0.5)
                         ns.UpdateDestroyButtons()
                     end)
-            end), "bagWarning" }
+            end)
         finish()
     end)
 end
@@ -2724,7 +2722,7 @@ local MESSAGE_NOTES = {
 local function BuildGeneralPage(page)
     CreateCardPage(page, function(addCard)
         local card, finish = addCard(L["Interface"])
-        AddRow(card, L["Show minimap button"], L["Left-click opens the list, right-click the settings."],
+        AddRow(card, L["Minimap button"], L["Left-click opens the list, right-click the settings."],
             SettingToggle("showMinimap", ns.UpdateMinimapButton))
         AddRow(card, L["Explain in tooltips"],
             L["Items in your bags say whether they'll be sold or kept, why, and what the stack sells for."],
@@ -2739,12 +2737,6 @@ local function BuildGeneralPage(page)
                 return button
             end)
         NewsDot(card, "tour")
-        AddRow(card, L["Tell me about new features"],
-            L["After an update with new features, one line in chat says what's new. This window shows it either way."],
-            function(parent)
-                return CreateToggle(parent, function() return ns.account.newsChat ~= false end, ns.SetNewsChat)
-            end)
-        NewsDot(card, "newsChat")
         finish()
 
         card, finish = addCard(L["Chat messages"])
@@ -2764,6 +2756,12 @@ local function BuildGeneralPage(page)
             end,
             { MESSAGE_NOTES.goblin, MESSAGE_NOTES.plain, MESSAGE_NOTES.summaries, MESSAGE_NOTES.none })
         showNote()
+        AddRow(card, L["Tell me about new features"],
+            L["After an update with new features, one line in chat says what's new. This window shows it either way."],
+            function(parent)
+                return CreateToggle(parent, function() return ns.account.newsChat ~= false end, ns.SetNewsChat)
+            end)
+        NewsDot(card, "newsChat")
         finish()
     end)
 end

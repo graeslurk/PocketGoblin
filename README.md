@@ -51,7 +51,7 @@ None of these are destroyed by the trash can or Make room either.
 
 - **Alt+Right-click** any item to put it on the auto-sell list or the keep list
 - **Coin and lock icons** on junk and kept items, and a green **upgrade arrow** on better gear (with Pawn), in the default bags, Baganator, Bagnon and EllesmereUI's bags, plus **equipment set icons** in the default bags, Bagnon and EllesmereUI's
-- **Destroy button** for the cheapest junk, with a confirmation and a value limit
+- **Trash can** for when no vendor is near: destroys your cheapest junk, with a confirmation and a value limit for the whole stack. Also on a hotkey
 - **Make room** when your loot doesn't fit: a button on the loot window destroys your cheapest junk and loots, in one click
 - **Open containers**: a button (and a hotkey) opens clams, sacks of loot and other containers, one per click
 - The trash can and the open button sit on the default bags, Baganator, Bagnon and EllesmereUI's bags
@@ -100,7 +100,8 @@ Pocket Goblin is in English. Translations are welcome: see `Locales/` for how to
 
 Hi, I'm Graeslurk! I play WoW Forever and got tired of clicking through
 vendor windows to sell junk, so I built a goblin to do it for me. Pocket
-Goblin is my first addon, and I'm working on it in my spare time.
+Goblin was my first addon, and I'm working on it in my spare time. I also
+made Fanny Pack and Soul Warden.
 
 Bug reports and ideas are very welcome: open an issue on GitHub (include
 the text from `/goblin debug`).

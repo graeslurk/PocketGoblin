@@ -2024,7 +2024,8 @@ local function BuildRulesPage(page)
             end)
         AddRow(card, L["Worth more at the auction house"],
             L["Items that earn more at the auction house than at a vendor, also on your auto-sell list. Not "
-                .. "grey items. Needs Auctionator or TradeSkillMaster."],
+                .. "grey items. Needs Auctionator or TradeSkillMaster; Auctionator prices older than a week "
+                .. "don't count."],
             SettingToggle("keepAuction", ns.OnRulesChanged))
         AddDependentRow(card, "keepAuction", L["Extra profit"],
             L["How much more an item has to earn there, after the auction house's 5% cut. Drag, or type an "
@@ -2037,6 +2038,24 @@ local function BuildRulesPage(page)
                         ns.OnRulesChanged()
                     end)
             end)
+        -- With both auction addons, whose price counts.
+        local hasAuctionator, hasTSM = ns.AuctionAddons()
+        if hasAuctionator and hasTSM then
+            AddDependentRow(card, "keepAuction", L["Price from"],
+                L["Whose price counts first. Auctionator: the cheapest listing from your last scan. "
+                    .. "TradeSkillMaster: its market value, an average of recent prices. The other is used for "
+                    .. "items the first has no price for."],
+                function(parent)
+                    return CreateSegmented(parent,
+                        { { "auctionator", "Auctionator" }, { "tsm", "TradeSkillMaster" } },
+                        function() return ns.db.auctionSource end,
+                        function(source)
+                            ns.db.auctionSource = source
+                            ns.OnRulesChanged()
+                        end)
+                end)
+            NewsDot(card, "auctionSource")
+        end
         AddRow(card, L["Always protected"],
             L["Items in an equipment set. Items on your auto-sell list still sell, whatever these rules say, "
                 .. "unless they're worth more at the auction house."])

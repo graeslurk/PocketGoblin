@@ -13,6 +13,15 @@ local L = ns.L
 -- a dot.
 ns.WHATS_NEW = {
     {
+        version = "1.13.0",
+        chat = L["choose whose auction prices count, and see the price an item is kept for"],
+        points = {
+            { text = L["Price from: with both Auctionator and TradeSkillMaster, choose whose price counts first for Worth more at the auction house."],
+                page = "rules", setting = "auctionSource" },
+            { text = L["An item kept for the auction house shows the price in its tooltip, and which addon it came from. Auctionator prices older than a week no longer count."] },
+        },
+    },
+    {
         version = "1.12.0",
         chat = L["a breakdown of what you sell with gold per day, and a search for your vendor visits"],
         points = {

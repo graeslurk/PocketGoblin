@@ -34,7 +34,7 @@ a coin with a question mark. Epics always ask.
 - **Upgrades**: gear better than what you wear in its slot, or that would fill an empty one. With **Pawn** installed, Pawn decides
 - **Gear you swap to**: green or better gear you've put on more than once in the last 30 days, like a resistance set or a swap weapon. Levelling gear you wore once and replaced still sells
 - **Items to disenchant**, on enchanters: green and better weapons and armor
-- Items that earn at least 10 silver (or an amount you choose) more at the **auction house** than at a vendor, when Auctionator or TradeSkillMaster is installed
+- Items that earn at least 10 silver (or an amount you choose) more at the **auction house** than at a vendor, when Auctionator or TradeSkillMaster is installed. With both, choose whose price counts first; Auctionator prices older than a week don't count. The item's tooltip shows the price it's kept for and which addon it came from
 - Items in an **equipment set**, which show the set's icon in your bags
 
 None of these are destroyed by the trash can or Make room either.
@@ -75,7 +75,7 @@ None of these are destroyed by the trash can or Make room either.
 - **Profiles**, per character, each with its own auto-sell and keep lists. Import another profile's lists into yours without copying its settings
 - **Share** your lists or a whole profile as text: paste it on another account, or give it to a friend
 - **A short tour** for new players: the first time your bags open, bubbles point at the coin, the trash can and the open button, and at your first vendor, at the vendor panel. `/goblin tour` plays it again
-- **What's new**: after an update with new features, a line in chat and a card at the top of the window say what's new, with a dot on the pages and settings that changed (the chat line can be turned off)
+- **What's new**: after an update with new features, a line in chat and a card at the top of the window say what's new, with a dot on the pages and settings that changed. **Show me** takes you straight to the setting (the chat line can be turned off)
 
 ## Commands
 

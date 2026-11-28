@@ -136,6 +136,7 @@ local defaults = {
     askQuality = 3,  -- a rule's sales of this quality (2 green, 3 blue, 4 epic) or better wait for your OK
     keepAuction = true,  -- with an auction addon, never sell items that earn at least...
     auctionProfit = 1000, -- ...this much copper more there than at a vendor (10 silver), after the house's cut
+    auctionSource = "auctionator", -- with both auction addons, whose price comes first: auctionator or tsm
     keepIcon = true,  -- lock icon on items on the keep list
     setIcon = true,   -- the set's icon on items in an equipment set
     upgradeIcon = true, -- green arrow on gear Pawn calls an upgrade (needs Pawn)
@@ -567,24 +568,55 @@ function IsUpgrade(itemID, link)
     return level > weakest
 end
 
--- The auction house price of an item from Auctionator or TradeSkillMaster,
--- in copper; nil when neither is installed or knows a price.
-function AuctionPrice(itemID)
-    local auctionator = Auctionator and Auctionator.API and Auctionator.API.v1
-    if auctionator and auctionator.GetAuctionPriceByItemID then
-        local ok, price = pcall(auctionator.GetAuctionPriceByItemID, "Pocket Goblin", itemID)
-        if ok and type(price) == "number" then return price end
+do
+    -- Auctionator remembers the cheapest listing of its last scan; one
+    -- older than this many days is left out, as prices move on.
+    local AUCTIONATOR_MAX_DAYS = 7
+
+    local function AuctionatorAPI()
+        return Auctionator and Auctionator.API and Auctionator.API.v1
     end
-    if TSM_API and TSM_API.GetCustomPriceValue then
+
+    local function FromAuctionator(itemID)
+        local api = AuctionatorAPI()
+        if not (api and api.GetAuctionPriceByItemID) then return nil end
+        local ok, price = pcall(api.GetAuctionPriceByItemID, "Pocket Goblin", itemID)
+        if not ok or type(price) ~= "number" then return nil end
+        if api.GetAuctionAgeByItemID then
+            local known, days = pcall(api.GetAuctionAgeByItemID, "Pocket Goblin", itemID)
+            if known and type(days) == "number" and days > AUCTIONATOR_MAX_DAYS then return nil end
+        end
+        return price
+    end
+
+    -- TSM's market value: its average of recent prices.
+    local function FromTSM(itemID)
+        if not (TSM_API and TSM_API.GetCustomPriceValue) then return nil end
         local ok, price = pcall(TSM_API.GetCustomPriceValue, "dbmarket", "i:" .. itemID)
         if ok and type(price) == "number" then return price end
     end
-end
 
--- Which auction addon prices come from, for the settings; nil if none.
-function ns.AuctionAddon()
-    if Auctionator and Auctionator.API and Auctionator.API.v1 then return "Auctionator" end
-    if TSM_API then return "TradeSkillMaster" end
+    -- The auction house price of an item, in copper, and the addon it came
+    -- from ("Auctionator" or "TradeSkillMaster"): the one chosen first under
+    -- Price from (auctionSource), or the other when it has no price. nil
+    -- when neither is installed or knows a price.
+    local SOURCES = {
+        { name = "Auctionator", price = FromAuctionator },
+        { name = "TradeSkillMaster", price = FromTSM },
+    }
+
+    function AuctionPrice(itemID)
+        local first = db and db.auctionSource == "tsm" and 2 or 1
+        for _, source in ipairs({ SOURCES[first], SOURCES[3 - first] }) do
+            local price = source.price(itemID)
+            if price then return price, source.name end
+        end
+    end
+
+    -- Whether Auctionator and TradeSkillMaster are installed, for the settings.
+    function ns.AuctionAddons()
+        return AuctionatorAPI() ~= nil, TSM_API ~= nil
+    end
 end
 
 -- True if the tooltip of the recipe in a bag slot says you already know it.
@@ -2469,6 +2501,13 @@ local function AddTooltipLine(tooltip, data)
     if not db or not data or not data.id then return end
     if issecretvalue and issecretvalue(data.id) then return end
     local flag = db.items[data.id]
+    -- Under "kept (worth more at the auction house)": the price it went by.
+    local function AddAuctionPrice()
+        local auction, source = AuctionPrice(data.id)
+        if not auction then return end
+        tooltip:AddDoubleLine("   " .. (L["Auction price (%s)"]):format(source), GetMoneyString(auction, true),
+            0.54, 0.55, 0.58, 1, 1, 1)
+    end
 
     -- In the bags: say why it sells and what the stack is worth.
     local bag, slot = TooltipBagSlot(tooltip)
@@ -2486,6 +2525,7 @@ local function AddTooltipLine(tooltip, data)
     elseif flag == true and info and info.itemID == data.id and WorthAuctioning(data.id, info.isBound) then
         tooltip:AddLine(L["Pocket Goblin: kept ("] .. ns.KeepRuleText("auction") .. ")",
             LOCK_COLOR[1], LOCK_COLOR[2], LOCK_COLOR[3], true)
+        AddAuctionPrice()
     elseif flag == true then
         tooltip:AddLine(L["Pocket Goblin: auto-sell"], 1, 0.82, 0)
     elseif flag == false then
@@ -2496,6 +2536,7 @@ local function AddTooltipLine(tooltip, data)
         if rule and JunkReason(info, bag, slot, true) then
             tooltip:AddLine(L["Pocket Goblin: kept ("] .. ns.KeepRuleText(rule, word) .. ")",
                 LOCK_COLOR[1], LOCK_COLOR[2], LOCK_COLOR[3], true)
+            if rule == "auction" then AddAuctionPrice() end
         end
     end
     local questGear = ns.QUEST_GEAR[data.id]

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.13.0
+
+New:
+- **Price from**: with both Auctionator and TradeSkillMaster installed, choose whose price counts first for **Worth more at the auction house**, on the Junk rules page. Auctionator's price is the cheapest listing from your last scan, so one overpriced listing could keep junk for the auction house; TradeSkillMaster's is its market value, an average of recent prices. When the addon you chose has no price for an item, the other's is used. Auctionator stays first unless you change it
+- **The auction price in the tooltip**: an item kept because it's worth more at the auction house now shows the price it was judged by, and which addon it came from
+
+Changed:
+- **Auctionator prices older than a week no longer count**: prices move on, so an item Auctionator hasn't seen in a scan for over 7 days is judged by TradeSkillMaster's price if you have it, and otherwise isn't kept for the auction house
+- **Show me** on the What's new card now scrolls to the setting that changed and lights it up for a moment, instead of only opening its page
+
 ## 1.12.0
 
 New:

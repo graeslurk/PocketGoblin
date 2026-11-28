@@ -724,6 +724,7 @@ local function CreateScrollArea(parent)
     thumb:SetScript("OnMouseUp", function(self) self:SetScript("OnUpdate", nil) end)
 
     scroll.UpdateScrollBar = update
+    scroll.ScrollTo = scrollTo
     return scroll, content
 end
 
@@ -775,12 +776,12 @@ end
 -- What's new on a setting: a gold dot after the title of the row just
 -- added, shown while a point on the What's new card names its key
 -- (point.setting in News.lua), so until "Got it".
-local newsDots = {} -- { dot, key }
+local newsDots = {} -- { dot, key, row, card }
 local function NewsDot(card, key)
     local row = card.rows[#card.rows]
     row.newsDot = Icon(card, "circle", 7, C.gold)
     row.newsDot:Hide()
-    newsDots[#newsDots + 1] = { row.newsDot, key }
+    newsDots[#newsDots + 1] = { row.newsDot, key, row, card }
 end
 
 local function UpdateNewsDots()
@@ -3875,6 +3876,48 @@ local function CreateNewsCard(parent)
         return headings[i]
     end
 
+    -- Lights up a setting's row in gold for a moment, then fades.
+    local function Flash(card, row)
+        if not card.flash then
+            local flash = card:CreateTexture(nil, "BACKGROUND", nil, 3)
+            flash:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.16)
+            local fade = flash:CreateAnimationGroup()
+            local alpha = fade:CreateAnimation("Alpha")
+            alpha:SetFromAlpha(1)
+            alpha:SetToAlpha(0)
+            alpha:SetStartDelay(1.2)
+            alpha:SetDuration(1.2)
+            fade:SetScript("OnFinished", function() flash:Hide() end)
+            card.flash, card.flashFade = flash, fade
+        end
+        local flash = card.flash
+        flash:ClearAllPoints()
+        flash:SetPoint("TOPLEFT", row.title, "TOPLEFT", -10, 8)
+        flash:SetPoint("RIGHT", card, "RIGHT", -10, 0)
+        flash:SetPoint("BOTTOM", row.desc or row.title, "BOTTOM", 0, -8)
+        card.flashFade:Stop()
+        flash:SetAlpha(1)
+        flash:Show()
+        card.flashFade:Play()
+    end
+
+    -- "Show me" on a point about a setting: scroll the page to its row
+    -- (a little below the top) and light it up. Only rows that are shown.
+    local function ShowSetting(key)
+        for _, item in ipairs(newsDots) do
+            local row, card = item[3], item[4]
+            if item[2] == key and row.title:IsVisible() then
+                local content = card:GetParent()
+                local scroll = content and content:GetParent()
+                if scroll and scroll.ScrollTo and content:GetTop() and row.title:GetTop() then
+                    scroll.ScrollTo(content:GetTop() - row.title:GetTop() - 60)
+                end
+                Flash(card, row)
+                return
+            end
+        end
+    end
+
     local function Point(i)
         if points[i] then return points[i] end
         local point = {}
@@ -3887,7 +3930,11 @@ local function CreateNewsCard(parent)
         point.link:SetScript("OnEnter", function(self) self.label:SetTextColor(C.goldHover[1], C.goldHover[2], C.goldHover[3]) end)
         point.link:SetScript("OnLeave", function(self) self.label:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end)
         point.link:SetScript("OnClick", function(self)
-            if self.page and pages[self.page] then SelectPage(self.page) end
+            if not (self.page and pages[self.page]) then return end
+            SelectPage(self.page)
+            local setting = self.setting
+            -- The page lays itself out as it's shown; positions are ready a frame later.
+            if setting then C_Timer.After(0, function() ShowSetting(setting) end) end
         end)
         points[i] = point
         return point
@@ -3907,6 +3954,7 @@ local function CreateNewsCard(parent)
                 local point = Point(shownPoints)
                 point.text:SetText(NEWS_BULLET .. info.text)
                 point.link.page = info.page
+                point.link.setting = info.setting
                 point.link:SetShown(info.page ~= nil)
                 self.order[#self.order + 1] = point
             end
